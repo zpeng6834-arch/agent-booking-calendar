@@ -36,6 +36,7 @@ export default function ServicesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingService, setEditingService] = useState<ServiceType | null>(null);
   const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
   // Form state
   const [name, setName] = useState('');
@@ -87,6 +88,7 @@ export default function ServicesPage() {
     setDurationMinutes(60);
     setCapacity(1);
     setIsActive(true);
+    setErrorMsg('');
     setDialogOpen(true);
   };
 
@@ -98,12 +100,14 @@ export default function ServicesPage() {
     setDurationMinutes(service.duration_minutes);
     setCapacity(service.capacity);
     setIsActive(service.is_active);
+    setErrorMsg('');
     setDialogOpen(true);
   };
 
   const handleSave = async () => {
     if (!name.trim() || !calendarId) return;
     setSaving(true);
+    setErrorMsg('');
     try {
       const supabase = await getSupabaseBrowserClientWithRetry();
       
@@ -139,7 +143,9 @@ export default function ServicesPage() {
       
       setDialogOpen(false);
       loadData();
-    } catch (error) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '保存失败，请重试';
+      setErrorMsg(message);
       console.error('Failed to save service:', error);
     } finally {
       setSaving(false);
@@ -270,7 +276,7 @@ export default function ServicesPage() {
                   </div>
                   <div className="flex items-center gap-1 text-muted-foreground">
                     <Users className="h-4 w-4" />
-                    容量 {service.capacity}
+                    每时段 {service.capacity} 人
                   </div>
                 </div>
               </CardContent>
@@ -342,7 +348,7 @@ export default function ServicesPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="capacity">容量</Label>
+                <Label htmlFor="capacity">每时段可预约人数</Label>
                 <Input
                   id="capacity"
                   type="number"
@@ -350,6 +356,9 @@ export default function ServicesPage() {
                   value={capacity}
                   onChange={(e) => setCapacity(parseInt(e.target.value) || 1)}
                 />
+                <p className="text-xs text-muted-foreground">
+                  同一时间段最多接受多少预约（1 = 一对一，5 = 可同时5人）
+                </p>
               </div>
             </div>
 
@@ -364,6 +373,9 @@ export default function ServicesPage() {
           </div>
 
           <DialogFooter>
+            {errorMsg && (
+              <p className="text-sm text-destructive mr-auto">{errorMsg}</p>
+            )}
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               取消
             </Button>

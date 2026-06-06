@@ -65,6 +65,7 @@ export default function CalendarsPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingCalendar, setEditingCalendar] = useState<CalendarType | null>(null);
   const [saving, setSaving] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
   // Form state
   const [name, setName] = useState('');
@@ -101,6 +102,7 @@ export default function CalendarsPage() {
     setTimezone('Asia/Shanghai');
     setDefaultCapacity(1);
     setBusinessHours(DEFAULT_BUSINESS_HOURS);
+    setErrorMsg('');
     setDialogOpen(true);
   };
 
@@ -110,12 +112,14 @@ export default function CalendarsPage() {
     setTimezone(calendar.timezone);
     setDefaultCapacity(calendar.default_capacity);
     setBusinessHours(calendar.business_hours || DEFAULT_BUSINESS_HOURS);
+    setErrorMsg('');
     setDialogOpen(true);
   };
 
   const handleSave = async () => {
     if (!name.trim()) return;
     setSaving(true);
+    setErrorMsg('');
     try {
       const supabase = await getSupabaseBrowserClientWithRetry();
       
@@ -149,7 +153,9 @@ export default function CalendarsPage() {
       
       setDialogOpen(false);
       loadCalendars();
-    } catch (error) {
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '保存失败，请重试';
+      setErrorMsg(message);
       console.error('Failed to save calendar:', error);
     } finally {
       setSaving(false);
@@ -279,7 +285,7 @@ export default function CalendarsPage() {
               </CardHeader>
               <CardContent>
                 <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <span>默认容量: {calendar.default_capacity}</span>
+                  <span>每时段可预约 {calendar.default_capacity} 人</span>
                 </div>
                 <div className="mt-4 flex flex-wrap gap-1">
                   {DAYS.map((day) => (
@@ -338,7 +344,7 @@ export default function CalendarsPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="capacity">默认容量</Label>
+                <Label htmlFor="capacity">每时段可预约人数</Label>
                 <Input
                   id="capacity"
                   type="number"
@@ -347,7 +353,7 @@ export default function CalendarsPage() {
                   onChange={(e) => setDefaultCapacity(parseInt(e.target.value) || 1)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  同一时间段可接受的最大预约数
+                  同一时间段内最多可接受多少个预约（例如：1 = 一对一，10 = 小班课）
                 </p>
               </div>
             </div>
@@ -413,6 +419,9 @@ export default function CalendarsPage() {
           </div>
 
           <DialogFooter>
+            {errorMsg && (
+              <p className="text-sm text-destructive mr-auto">{errorMsg}</p>
+            )}
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               取消
             </Button>
