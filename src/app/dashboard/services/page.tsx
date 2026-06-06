@@ -63,16 +63,22 @@ export default function ServicesPage() {
         .order('created_at', { ascending: false });
       
       if (calendarError) throw calendarError;
-      setCalendars((calendarData as Calendar[]) || []);
+      const calList = (calendarData as Calendar[]) || [];
+      setCalendars(calList);
 
-      // Load services with calendar info
+      // Load services (separate query, then join manually)
       const { data: serviceData, error: serviceError } = await supabase
         .from('services')
-        .select('*, calendars(*)')
+        .select('*')
         .order('created_at', { ascending: false });
       
       if (serviceError) throw serviceError;
-      setServices((serviceData as (ServiceType & { calendars?: Calendar })[]) || []);
+      const calMap = new Map(calList.map(c => [c.id, c]));
+      const enriched = ((serviceData as ServiceType[]) || []).map(s => ({
+        ...s,
+        calendars: calMap.get(s.calendar_id),
+      }));
+      setServices(enriched);
     } catch (error) {
       console.error('Failed to load data:', error);
     } finally {

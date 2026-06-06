@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CalendarDays, Calendar, Loader2, Search, Filter } from 'lucide-react';
-import type { Booking as BookingType, Service } from '@/storage/database/shared/schema';
+import type { Booking as BookingType, Service as ServiceType, Calendar as CalendarType } from '@/storage/database/shared/schema';
 
 const STATUS_LABELS: Record<string, string> = {
   pending: '待确认',
@@ -44,8 +44,8 @@ const STATUS_COLORS: Record<string, 'default' | 'secondary' | 'destructive' | 'o
 };
 
 interface BookingWithRelations extends BookingType {
-  calendars?: { name: string };
-  services?: { name: string };
+  calendars?: CalendarType;
+  services?: ServiceType;
 }
 
 export default function BookingsPage() {
@@ -65,9 +65,17 @@ export default function BookingsPage() {
     try {
       const supabase = await getSupabaseBrowserClientWithRetry();
       
+      // Load reference data first
+      const [calRes, svcRes] = await Promise.all([
+        supabase.from('calendars').select('*'),
+        supabase.from('services').select('*'),
+      ]);
+      const calMap = new Map(((calRes.data as CalendarType[]) || []).map(c => [c.id, c]));
+      const svcMap = new Map(((svcRes.data as ServiceType[]) || []).map(s => [s.id, s]));
+
       let query = supabase
         .from('bookings')
-        .select('*, calendars(name), services(name)')
+        .select('*')
         .order('start_time', { ascending: false });
 
       if (statusFilter !== 'all') {
@@ -77,7 +85,12 @@ export default function BookingsPage() {
       const { data, error } = await query.limit(100);
       
       if (error) throw error;
-      setBookings((data as BookingWithRelations[]) || []);
+      const enriched = ((data as BookingType[]) || []).map(b => ({
+        ...b,
+        calendars: calMap.get(b.calendar_id),
+        services: svcMap.get(b.service_id),
+      }));
+      setBookings(enriched);
     } catch (error) {
       console.error('Failed to load bookings:', error);
     } finally {
