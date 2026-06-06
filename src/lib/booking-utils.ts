@@ -21,7 +21,7 @@ export interface BookingResult {
   booking?: Booking;
   error?: string;
   /** 预约失败原因类型 */
-  failReason?: 'service_full' | 'calendar_full' | 'outside_business_hours' | 'other';
+  failReason?: 'service_full' | 'calendar_full' | 'duplicate' | 'outside_business_hours' | 'other';
   suggestedSlots?: TimeSlot[];
 }
 
@@ -194,6 +194,27 @@ export async function createBooking(
 
   if (!inSlot) {
     return { success: false, error: '该时间段不在营业时段内', failReason: 'outside_business_hours' };
+  }
+
+  // ===== 重复预约校验 =====
+  // 同一客户（邮箱）不能在同一时间段预约同一服务
+  const { data: duplicateBooking } = await client
+    .from('bookings')
+    .select('id')
+    .eq('calendar_id', calendarId)
+    .eq('service_id', serviceId)
+    .eq('customer_email', customerEmail)
+    .in('status', ['pending', 'confirmed'])
+    .lt('start_time', end.toISOString())
+    .gt('end_time', start.toISOString())
+    .maybeSingle();
+
+  if (duplicateBooking) {
+    return {
+      success: false,
+      error: `${customerName} 已在该时段预约了 ${service.name}，请勿重复预约`,
+      failReason: 'duplicate',
+    };
   }
 
   // ===== 双层容量校验 =====
