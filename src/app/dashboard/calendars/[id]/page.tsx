@@ -209,6 +209,7 @@ function CalendarView({ calendar, services, bookings }: {
                             <div
                               key={bi}
                               className={`text-[10px] px-1 py-0.5 rounded truncate text-white ${SERVICE_COLORS[svcIdx % SERVICE_COLORS.length]}`}
+                              title={`${b.customer_name} · ${svc?.name || '服务'}${b.notes ? ' | ' + b.notes : ''}`}
                             >
                               {b.customer_name} · {svc?.name || '服务'}
                             </div>
@@ -286,6 +287,11 @@ function CalendarView({ calendar, services, bookings }: {
                             {' - '}
                             {svc?.name}
                           </div>
+                          {b.notes && (
+                            <div className="text-xs text-muted-foreground/70 truncate mt-0.5 italic" title={b.notes}>
+                              {b.notes}
+                            </div>
+                          )}
                         </div>
                         {b.status === 'cancelled' && (
                           <Badge variant="destructive" className="text-[10px]">已取消</Badge>
