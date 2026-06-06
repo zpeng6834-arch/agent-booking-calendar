@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { getSupabaseBrowserClientWithRetry } from '@/lib/supabase-browser';
@@ -70,15 +70,6 @@ const SERVICE_COLORS = [
   'bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500',
   'bg-violet-500', 'bg-cyan-500', 'bg-orange-500', 'bg-teal-500',
 ];
-
-const STATUS_LABELS: Record<string, string> = {
-  pending: '待确认', confirmed: '已确认',
-  cancelled: '已取消', completed: '已完成', no_show: '未到场',
-};
-const STATUS_COLORS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
-  pending: 'secondary', confirmed: 'default',
-  cancelled: 'destructive', completed: 'default', no_show: 'outline',
-};
 
 // ===================== 工具函数 =====================
 
@@ -156,7 +147,9 @@ function CalendarView({ calendar, services, bookings }: {
 
   const getBookingsForDate = (d: Date) => {
     const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    return bookings.filter(b => String(b.start_time).startsWith(dateStr));
+    return bookings
+      .filter(b => String(b.start_time).startsWith(dateStr))
+      .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
   };
 
   const selectedDateBookings = selectedDate ? getBookingsForDate(selectedDate) : [];
@@ -287,16 +280,16 @@ function CalendarView({ calendar, services, bookings }: {
                       <div key={b.id} className="flex items-center gap-2 p-2 rounded-md bg-muted/50 text-sm">
                         <div className={`w-2 h-2 rounded-full ${SERVICE_COLORS[svcIdx % SERVICE_COLORS.length]}`} />
                         <div className="flex-1 min-w-0">
-                          <div className="font-medium truncate">{b.customer_name}</div>
+                          <div className={`font-medium truncate ${b.status === 'cancelled' ? 'line-through text-muted-foreground' : ''}`}>{b.customer_name}</div>
                           <div className="text-xs text-muted-foreground">
                             {new Date(b.start_time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
                             {' - '}
                             {svc?.name}
                           </div>
                         </div>
-                        <Badge variant={STATUS_COLORS[b.status] || 'secondary'} className="text-[10px]">
-                          {STATUS_LABELS[b.status] || b.status}
-                        </Badge>
+                        {b.status === 'cancelled' && (
+                          <Badge variant="destructive" className="text-[10px]">已取消</Badge>
+                        )}
                       </div>
                     );
                   })}
@@ -327,6 +320,60 @@ export default function CalendarDetailPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // 预约筛选
+  const [filterName, setFilterName] = useState('');
+  const [filterContact, setFilterContact] = useState('');
+  const [filterService, setFilterService] = useState('all');
+  const [filterStartTime, setFilterStartTime] = useState('');
+  const [filterEndTime, setFilterEndTime] = useState('');
+  const [filterCreatedStart, setFilterCreatedStart] = useState('');
+  const [filterCreatedEnd, setFilterCreatedEnd] = useState('');
+
+  const filteredBookings = useMemo(() => {
+    let result = [...bookings];
+    if (filterName.trim()) {
+      const q = filterName.trim().toLowerCase();
+      result = result.filter(b => b.customer_name.toLowerCase().includes(q));
+    }
+    if (filterContact.trim()) {
+      const q = filterContact.trim().toLowerCase();
+      result = result.filter(b =>
+        b.customer_email.toLowerCase().includes(q) ||
+        (b.customer_phone && b.customer_phone.includes(q))
+      );
+    }
+    if (filterService && filterService !== 'all') {
+      result = result.filter(b => b.service_id === filterService);
+    }
+    if (filterStartTime) {
+      result = result.filter(b => new Date(b.start_time) >= new Date(filterStartTime));
+    }
+    if (filterEndTime) {
+      const end = new Date(filterEndTime);
+      end.setDate(end.getDate() + 1);
+      result = result.filter(b => new Date(b.start_time) < end);
+    }
+    if (filterCreatedStart) {
+      result = result.filter(b => new Date(b.created_at) >= new Date(filterCreatedStart));
+    }
+    if (filterCreatedEnd) {
+      const end = new Date(filterCreatedEnd);
+      end.setDate(end.getDate() + 1);
+      result = result.filter(b => new Date(b.created_at) < end);
+    }
+    return result.sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
+  }, [bookings, filterName, filterContact, filterService, filterStartTime, filterEndTime, filterCreatedStart, filterCreatedEnd]);
+
+  const clearFilters = () => {
+    setFilterName('');
+    setFilterContact('');
+    setFilterService('all');
+    setFilterStartTime('');
+    setFilterEndTime('');
+    setFilterCreatedStart('');
+    setFilterCreatedEnd('');
+  };
 
   // 服务弹窗
   const [svcDialogOpen, setSvcDialogOpen] = useState(false);
@@ -808,15 +855,97 @@ ${svcList}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold">预约记录</h2>
-              <Badge variant="outline">{bookings.length} 条记录</Badge>
+              <Badge variant="outline">{filteredBookings.length} 条记录</Badge>
             </div>
-            {bookings.length === 0 ? (
+
+            {/* 筛选区 */}
+            <Card>
+              <CardContent className="py-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">客户姓名</Label>
+                    <Input
+                      placeholder="搜索姓名"
+                      value={filterName}
+                      onChange={e => setFilterName(e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">联系方式</Label>
+                    <Input
+                      placeholder="邮箱或电话"
+                      value={filterContact}
+                      onChange={e => setFilterContact(e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">服务类型</Label>
+                    <Select value={filterService} onValueChange={setFilterService}>
+                      <SelectTrigger className="h-8 text-sm"><SelectValue placeholder="全部服务" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">全部服务</SelectItem>
+                        {services.map(s => (
+                          <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">预约时间（起）</Label>
+                    <Input
+                      type="date"
+                      value={filterStartTime}
+                      onChange={e => setFilterStartTime(e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">预约时间（止）</Label>
+                    <Input
+                      type="date"
+                      value={filterEndTime}
+                      onChange={e => setFilterEndTime(e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 mt-3">
+                  <div className="space-y-1">
+                    <Label className="text-xs">记录创建时间（起）</Label>
+                    <Input
+                      type="date"
+                      value={filterCreatedStart}
+                      onChange={e => setFilterCreatedStart(e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">记录创建时间（止）</Label>
+                    <Input
+                      type="date"
+                      value={filterCreatedEnd}
+                      onChange={e => setFilterCreatedEnd(e.target.value)}
+                      className="h-8 text-sm"
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <Button variant="outline" size="sm" onClick={clearFilters} className="h-8">
+                      清除筛选
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {filteredBookings.length === 0 ? (
               <Card>
                 <CardContent className="py-12 text-center">
                   <CalendarIcon className="h-12 w-12 mx-auto text-muted-foreground/50" />
                   <h3 className="mt-4 font-medium">暂无预约记录</h3>
                   <p className="text-sm text-muted-foreground mt-1">
-                    通过 API 创建的预约会显示在这里
+                    {bookings.length === 0 ? '通过 API 创建的预约会显示在这里' : '没有匹配筛选条件的记录'}
                   </p>
                 </CardContent>
               </Card>
@@ -827,29 +956,40 @@ ${svcList}
                     <TableHeader>
                       <TableRow>
                         <TableHead>客户</TableHead>
+                        <TableHead>联系方式</TableHead>
                         <TableHead>服务</TableHead>
-                        <TableHead>时间</TableHead>
-                        <TableHead>状态</TableHead>
+                        <TableHead>预约时间</TableHead>
+                        <TableHead>记录创建时间</TableHead>
+                        <TableHead>备注</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {bookings.map(b => {
+                      {filteredBookings.map(b => {
                         const svc = services.find(s => s.id === b.service_id);
+                        const isCancelled = b.status === 'cancelled';
                         return (
-                          <TableRow key={b.id}>
+                          <TableRow key={b.id} className={isCancelled ? 'opacity-50' : ''}>
                             <TableCell>
-                              <div>
+                              <div className="flex items-center gap-2">
                                 <div className="font-medium">{b.customer_name}</div>
-                                <div className="text-xs text-muted-foreground">{b.customer_email}</div>
+                                {isCancelled && (
+                                  <Badge variant="destructive" className="text-[10px] px-1.5 py-0">已取消</Badge>
+                                )}
                               </div>
                             </TableCell>
-                            <TableCell>{svc?.name || '-'}</TableCell>
-                            <TableCell className="text-sm">{formatTime(String(b.start_time))}</TableCell>
                             <TableCell>
-                              <Badge variant={STATUS_COLORS[b.status] || 'secondary'}>
-                                {STATUS_LABELS[b.status] || b.status}
-                              </Badge>
+                              <div className="text-sm">{b.customer_email}</div>
+                              {b.customer_phone && <div className="text-xs text-muted-foreground">{b.customer_phone}</div>}
                             </TableCell>
+                            <TableCell>{svc?.name || '-'}</TableCell>
+                            <TableCell className="text-sm">
+                              <div>{formatTime(String(b.start_time))}</div>
+                              <div className="text-xs text-muted-foreground">
+                                至 {formatTime(String(b.end_time))}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">{formatTime(String(b.created_at))}</TableCell>
+                            <TableCell className="text-sm text-muted-foreground max-w-[150px] truncate">{b.notes || '-'}</TableCell>
                           </TableRow>
                         );
                       })}
