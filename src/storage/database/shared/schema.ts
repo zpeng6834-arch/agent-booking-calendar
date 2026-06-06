@@ -92,6 +92,7 @@ export const apiKeys = pgTable(
     user_id: uuid("user_id").notNull().default(sql`auth.uid()`),
     key: varchar("key", { length: 64 }).notNull().unique(),
     name: varchar("name", { length: 255 }).notNull(),
+    calendar_id: uuid("calendar_id").references(() => calendars.id, { onDelete: "cascade" }),
     last_used_at: timestamp("last_used_at", { withTimezone: true }),
     is_active: boolean("is_active").notNull().default(true),
     created_at: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
@@ -100,6 +101,7 @@ export const apiKeys = pgTable(
     index("api_keys_user_id_idx").on(table.user_id),
     index("api_keys_key_idx").on(table.key),
     index("api_keys_is_active_idx").on(table.is_active),
+    index("api_keys_calendar_id_idx").on(table.calendar_id),
   ]
 );
 

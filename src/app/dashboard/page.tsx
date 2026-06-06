@@ -8,14 +8,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
   Calendar,
   Briefcase,
   Key,
@@ -38,11 +30,10 @@ interface Template {
   calendar: {
     name: string;
     timezone: string;
-    /** 同时段总容量：全店同一时间段最多接待的客户总数 */
     default_capacity: number;
     business_hours: Record<string, { enabled: boolean; slots: { start: string; end: string }[] }>;
   };
-  services: { name: string; description: string; duration_minutes: number; /** 该服务同时段可接待人数 */ capacity: number }[];
+  services: { name: string; description: string; duration_minutes: number; capacity: number }[];
 }
 
 const TEMPLATES: Template[] = [
@@ -54,7 +45,7 @@ const TEMPLATES: Template[] = [
     calendar: {
       name: '咨询日历',
       timezone: 'Asia/Shanghai',
-      default_capacity: 1, // 只有1个顾问，同时只能接待1人
+      default_capacity: 1,
       business_hours: {
         monday: { enabled: true, slots: [{ start: '09:00', end: '12:00' }, { start: '14:00', end: '18:00' }] },
         tuesday: { enabled: true, slots: [{ start: '09:00', end: '12:00' }, { start: '14:00', end: '18:00' }] },
@@ -79,7 +70,7 @@ const TEMPLATES: Template[] = [
     calendar: {
       name: '门诊日历',
       timezone: 'Asia/Shanghai',
-      default_capacity: 5, // 诊所同时段总容量5人（如5位医生）
+      default_capacity: 5,
       business_hours: {
         monday: { enabled: true, slots: [{ start: '08:00', end: '12:00' }, { start: '14:00', end: '17:30' }] },
         tuesday: { enabled: true, slots: [{ start: '08:00', end: '12:00' }, { start: '14:00', end: '17:30' }] },
@@ -104,7 +95,7 @@ const TEMPLATES: Template[] = [
     calendar: {
       name: '门店日历',
       timezone: 'Asia/Shanghai',
-      default_capacity: 10, // 10个技师同时段总容量
+      default_capacity: 10,
       business_hours: {
         monday: { enabled: true, slots: [{ start: '10:00', end: '22:00' }] },
         tuesday: { enabled: true, slots: [{ start: '10:00', end: '22:00' }] },
@@ -129,7 +120,7 @@ const TEMPLATES: Template[] = [
     calendar: {
       name: '课程日历',
       timezone: 'Asia/Shanghai',
-      default_capacity: 20, // 机构同时段最多20人
+      default_capacity: 20,
       business_hours: {
         monday: { enabled: true, slots: [{ start: '09:00', end: '21:00' }] },
         tuesday: { enabled: true, slots: [{ start: '09:00', end: '21:00' }] },
@@ -148,30 +139,12 @@ const TEMPLATES: Template[] = [
   },
 ];
 
-interface DashboardStats {
-  calendarCount: number;
-  serviceCount: number;
-  pendingBookings: number;
-  apiKeyCount: number;
-  hasCalendar: boolean;
-  hasService: boolean;
-  hasApiKey: boolean;
-}
-
 export default function DashboardPage() {
   const { user } = useAuth();
   const router = useRouter();
-  const [stats, setStats] = useState<DashboardStats>({
-    calendarCount: 0,
-    serviceCount: 0,
-    pendingBookings: 0,
-    apiKeyCount: 0,
-    hasCalendar: false,
-    hasService: false,
-    hasApiKey: false,
-  });
+  const [calendarCount, setCalendarCount] = useState(0);
+  const [pendingBookings, setPendingBookings] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [applyingTemplate, setApplyingTemplate] = useState(false);
   const [appliedTemplate, setAppliedTemplate] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState('');
@@ -181,28 +154,12 @@ export default function DashboardPage() {
     setLoading(true);
     try {
       const supabase = await getSupabaseBrowserClientWithRetry();
-
-      const [calRes, svcRes, bookingRes, keyRes] = await Promise.all([
+      const [calRes, bookingRes] = await Promise.all([
         supabase.from('calendars').select('id', { count: 'exact' }),
-        supabase.from('services').select('id', { count: 'exact' }),
         supabase.from('bookings').select('id', { count: 'exact' }).eq('status', 'pending'),
-        supabase.from('api_keys').select('id', { count: 'exact' }).eq('is_active', true),
       ]);
-
-      const calendarCount = calRes.count ?? 0;
-      const serviceCount = svcRes.count ?? 0;
-      const pendingBookings = bookingRes.count ?? 0;
-      const apiKeyCount = keyRes.count ?? 0;
-
-      setStats({
-        calendarCount,
-        serviceCount,
-        pendingBookings,
-        apiKeyCount,
-        hasCalendar: calendarCount > 0,
-        hasService: serviceCount > 0,
-        hasApiKey: apiKeyCount > 0,
-      });
+      setCalendarCount(calRes.count ?? 0);
+      setPendingBookings(bookingRes.count ?? 0);
     } catch (error) {
       console.error('Failed to load stats:', error);
     } finally {
@@ -210,9 +167,7 @@ export default function DashboardPage() {
     }
   }, [user]);
 
-  useEffect(() => {
-    loadStats();
-  }, [loadStats]);
+  useEffect(() => { loadStats(); }, [loadStats]);
 
   const applyTemplate = async (template: Template) => {
     setApplyingTemplate(true);
@@ -220,7 +175,6 @@ export default function DashboardPage() {
     try {
       const supabase = await getSupabaseBrowserClientWithRetry();
 
-      // 1. Create calendar
       const { data: calendarData, error: calError } = await supabase
         .from('calendars')
         .insert({
@@ -235,8 +189,7 @@ export default function DashboardPage() {
       if (calError) throw calError;
       const calendarId = calendarData.id;
 
-      // 2. Create services
-      const serviceInserts = template.services.map((svc) => ({
+      const serviceInserts = template.services.map(svc => ({
         calendar_id: calendarId,
         name: svc.name,
         description: svc.description,
@@ -250,40 +203,15 @@ export default function DashboardPage() {
 
       setAppliedTemplate(template.id);
       loadStats();
+
+      // 自动跳转到日历详情
+      router.push(`/dashboard/calendars/${calendarId}`);
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : '模板应用失败，请重试';
-      setErrorMsg(message);
-      console.error('Failed to apply template:', error);
+      setErrorMsg(error instanceof Error ? error.message : '模板应用失败，请重试');
     } finally {
       setApplyingTemplate(false);
     }
   };
-
-  const setupSteps = [
-    {
-      title: '创建日历',
-      description: '配置时区、营业时间和同时段总容量（全店最多同时接待多少人）',
-      href: '/dashboard/calendars',
-      done: stats.hasCalendar,
-      icon: <Calendar className="h-4 w-4" />,
-    },
-    {
-      title: '添加服务项目',
-      description: '定义服务名称、时长和每时段可预约人数（如5位按摩师填5）',
-      href: '/dashboard/services',
-      done: stats.hasService,
-      icon: <Briefcase className="h-4 w-4" />,
-    },
-    {
-      title: '生成 API Key',
-      description: '获取密钥并集成到您的 AI Agent',
-      href: '/dashboard/api-keys',
-      done: stats.hasApiKey,
-      icon: <Key className="h-4 w-4" />,
-    },
-  ];
-
-  const allDone = setupSteps.every((s) => s.done);
 
   if (loading) {
     return (
@@ -302,175 +230,137 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      {/* Stats */}
+      <div className="grid gap-4 md:grid-cols-2">
         <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => router.push('/dashboard/calendars')}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">日历数量</CardTitle>
+            <CardTitle className="text-sm font-medium">我的日历</CardTitle>
             <Calendar className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.calendarCount}</div>
+            <div className="text-2xl font-bold">{calendarCount}</div>
             <p className="text-xs text-muted-foreground">点击管理日历</p>
           </CardContent>
         </Card>
-        <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => router.push('/dashboard/services')}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">服务项目</CardTitle>
-            <Briefcase className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.serviceCount}</div>
-            <p className="text-xs text-muted-foreground">点击管理服务</p>
-          </CardContent>
-        </Card>
-        <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => router.push('/dashboard/bookings')}>
+        <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => router.push('/dashboard/calendars')}>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">待处理预约</CardTitle>
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.pendingBookings}</div>
-            <p className="text-xs text-muted-foreground">点击查看预约</p>
-          </CardContent>
-        </Card>
-        <Card className="cursor-pointer hover:border-primary/50 transition-colors" onClick={() => router.push('/dashboard/api-keys')}>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">API 密钥</CardTitle>
-            <Key className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.apiKeyCount}</div>
-            <p className="text-xs text-muted-foreground">点击管理密钥</p>
+            <div className="text-2xl font-bold">{pendingBookings}</div>
+            <p className="text-xs text-muted-foreground">在日历详情中查看</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Quick Start Steps */}
-      {!allDone && (
+      {/* No Calendar - Onboarding */}
+      {calendarCount === 0 && (
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle>快速开始</CardTitle>
+                <CardTitle>开始使用</CardTitle>
                 <CardDescription>
-                  按步骤完成初始化，让 AI Agent 开始处理预约
+                  创建你的第一个预约日历，然后在日历中添加服务、查看预约、配置 API
                 </CardDescription>
               </div>
-              <Button variant="outline" onClick={() => setTemplateDialogOpen(true)}>
-                <Sparkles className="mr-2 h-4 w-4" />
-                从模板创建
-              </Button>
             </div>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              {setupSteps.map((step, idx) => (
+          <CardContent className="space-y-6">
+            {/* Quick start steps */}
+            <div className="space-y-3">
+              {[
+                { icon: <Calendar className="h-4 w-4" />, title: '创建日历', desc: '设置时区、营业时间、总容量' },
+                { icon: <Briefcase className="h-4 w-4" />, title: '添加服务', desc: '在日历中添加服务项目（名称、时长、容量）' },
+                { icon: <Key className="h-4 w-4" />, title: '集成 API', desc: '生成密钥、OpenAPI Schema、Agent Prompt' },
+              ].map((step, idx) => (
                 <div key={idx} className="flex items-center gap-4">
-                  <div className="flex-shrink-0">
-                    {step.done ? (
-                      <CheckCircle2 className="h-8 w-8 text-primary" />
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm">
-                        {idx + 1}
-                      </div>
-                    )}
+                  <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold text-sm">
+                    {idx + 1}
                   </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      {step.icon}
-                      <h3 className="font-medium">{step.title}</h3>
-                      {step.done && (
-                        <Badge variant="secondary" className="text-xs">已完成</Badge>
-                      )}
+                  <div className="flex items-center gap-2 flex-1">
+                    {step.icon}
+                    <div>
+                      <span className="font-medium">{step.title}</span>
+                      <span className="text-sm text-muted-foreground ml-2">{step.desc}</span>
                     </div>
-                    <p className="text-sm text-muted-foreground">{step.description}</p>
                   </div>
-                  {!step.done && (
-                    <Button size="sm" onClick={() => router.push(step.href)}>
-                      前往设置
-                      <ArrowRight className="ml-1 h-4 w-4" />
-                    </Button>
-                  )}
                 </div>
               ))}
             </div>
+
+            <div className="border-t pt-4">
+              <h3 className="font-medium mb-3 flex items-center gap-2">
+                <Sparkles className="h-4 w-4" />
+                从模板快速创建
+              </h3>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {TEMPLATES.map(template => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    onClick={() => applyTemplate(template)}
+                    disabled={applyingTemplate}
+                    className="flex flex-col items-start gap-2 rounded-lg border border-border p-4 text-left hover:border-primary/50 hover:bg-muted/50 transition-colors disabled:opacity-50"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
+                        {template.icon}
+                      </div>
+                      <span className="font-medium text-sm">{template.name}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{template.description}</p>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <Users className="h-3 w-3" />
+                        总容量 {template.calendar.default_capacity}人
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Briefcase className="h-3 w-3" />
+                        {template.services.length}项服务
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {appliedTemplate && (
+              <div className="flex items-center gap-2 text-sm text-primary">
+                <CheckCircle2 className="h-4 w-4" />
+                模板已应用！正在跳转到日历详情...
+              </div>
+            )}
+            {errorMsg && <p className="text-sm text-destructive">{errorMsg}</p>}
+
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">或者</span>
+              <Button variant="outline" onClick={() => router.push('/dashboard/calendars')}>
+                自定义创建日历 <ArrowRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
 
-      {/* All Done */}
-      {allDone && (
+      {/* Has Calendars - Quick Actions */}
+      {calendarCount > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-primary" />
-              初始化完成
-            </CardTitle>
-            <CardDescription>
-              所有设置已就绪，您的 AI Agent 可以开始处理预约了
-            </CardDescription>
+            <CardTitle>快速操作</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex gap-3">
-              <Button onClick={() => router.push('/dashboard/api-docs')}>
-                查看 API 文档
-                <ArrowRight className="ml-1 h-4 w-4" />
+              <Button onClick={() => router.push('/dashboard/calendars')}>
+                <Calendar className="mr-2 h-4 w-4" />
+                管理日历
               </Button>
-              <Button variant="outline" onClick={() => router.push('/dashboard/bookings')}>
-                查看预约列表
+              <Button variant="outline" onClick={() => router.push('/dashboard/calendars')}>
+                <Sparkles className="mr-2 h-4 w-4" />
+                从模板创建新日历
               </Button>
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Template Quick Start (shown when no calendar) */}
-      {!stats.hasCalendar && (
-        <Card>
-          <CardHeader>
-            <CardTitle>推荐模板</CardTitle>
-            <CardDescription>
-              选择一个模板快速创建日历和服务，也可以自定义
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {TEMPLATES.map((template) => (
-                <button
-                  key={template.id}
-                  type="button"
-                  onClick={() => applyTemplate(template)}
-                  disabled={applyingTemplate}
-                  className="flex flex-col items-start gap-2 rounded-lg border border-border p-4 text-left hover:border-primary/50 hover:bg-muted/50 transition-colors disabled:opacity-50"
-                >
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
-                      {template.icon}
-                    </div>
-                    <span className="font-medium text-sm">{template.name}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">{template.description}</p>
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Users className="h-3 w-3" />
-                    总容量 {template.calendar.default_capacity} 人/时段
-                  </div>
-                </button>
-              ))}
-            </div>
-            {appliedTemplate && (
-              <div className="mt-4 flex items-center gap-2 text-sm text-primary">
-                <CheckCircle2 className="h-4 w-4" />
-                模板已应用！
-                <Button variant="link" size="sm" className="px-1" onClick={() => router.push('/dashboard/services')}>
-                  查看服务
-                  <ArrowRight className="ml-1 h-3 w-3" />
-                </Button>
-              </div>
-            )}
-            {errorMsg && (
-              <p className="mt-4 text-sm text-destructive">{errorMsg}</p>
-            )}
           </CardContent>
         </Card>
       )}

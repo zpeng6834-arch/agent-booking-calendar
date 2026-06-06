@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { getSupabaseBrowserClientWithRetry } from '@/lib/supabase-browser';
 import { Button } from '@/components/ui/button';
@@ -24,28 +25,19 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Calendar, Plus, Edit, Trash2, Loader2 } from 'lucide-react';
+import { Calendar, Plus, Trash2, Loader2, ArrowRight, Clock, Users } from 'lucide-react';
 import type { Calendar as CalendarType, BusinessHoursConfig } from '@/storage/database/shared/schema';
 
 const TIMEZONES = [
-  'Asia/Shanghai',
-  'Asia/Tokyo',
-  'Asia/Singapore',
-  'America/New_York',
-  'America/Los_Angeles',
-  'Europe/London',
-  'Europe/Paris',
+  'Asia/Shanghai', 'Asia/Tokyo', 'Asia/Singapore',
+  'America/New_York', 'America/Los_Angeles',
+  'Europe/London', 'Europe/Paris',
 ];
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
 const DAY_LABELS: Record<string, string> = {
-  monday: '周一',
-  tuesday: '周二',
-  wednesday: '周三',
-  thursday: '周四',
-  friday: '周五',
-  saturday: '周六',
-  sunday: '周日',
+  monday: '周一', tuesday: '周二', wednesday: '周三',
+  thursday: '周四', friday: '周五', saturday: '周六', sunday: '周日',
 };
 
 const DEFAULT_BUSINESS_HOURS: BusinessHoursConfig = {
@@ -59,34 +51,27 @@ const DEFAULT_BUSINESS_HOURS: BusinessHoursConfig = {
 };
 
 export default function CalendarsPage() {
+  const router = useRouter();
   const { user } = useAuth();
   const [calendars, setCalendars] = useState<CalendarType[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [editingCalendar, setEditingCalendar] = useState<CalendarType | null>(null);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Form state
   const [name, setName] = useState('');
   const [timezone, setTimezone] = useState('Asia/Shanghai');
-  const [defaultCapacity, setDefaultCapacity] = useState(1);
+  const [defaultCapacity, setDefaultCapacity] = useState(10);
   const [businessHours, setBusinessHours] = useState<BusinessHoursConfig>(DEFAULT_BUSINESS_HOURS);
 
-  useEffect(() => {
-    loadCalendars();
-  }, [user]);
+  useEffect(() => { loadCalendars(); }, [user]);
 
   const loadCalendars = async () => {
     if (!user) return;
     setLoading(true);
     try {
       const supabase = await getSupabaseBrowserClientWithRetry();
-      const { data, error } = await supabase
-        .from('calendars')
-        .select('*')
-        .order('created_at', { ascending: false });
-      
+      const { data, error } = await supabase.from('calendars').select('*').order('created_at', { ascending: false });
       if (error) throw error;
       setCalendars((data as CalendarType[]) || []);
     } catch (error) {
@@ -96,128 +81,61 @@ export default function CalendarsPage() {
     }
   };
 
-  const openCreateDialog = () => {
-    setEditingCalendar(null);
-    setName('');
-    setTimezone('Asia/Shanghai');
-    setDefaultCapacity(1);
-    setBusinessHours(DEFAULT_BUSINESS_HOURS);
-    setErrorMsg('');
-    setDialogOpen(true);
-  };
-
-  const openEditDialog = (calendar: CalendarType) => {
-    setEditingCalendar(calendar);
-    setName(calendar.name);
-    setTimezone(calendar.timezone);
-    setDefaultCapacity(calendar.default_capacity);
-    setBusinessHours(calendar.business_hours || DEFAULT_BUSINESS_HOURS);
-    setErrorMsg('');
-    setDialogOpen(true);
-  };
-
   const handleSave = async () => {
     if (!name.trim()) return;
     setSaving(true);
     setErrorMsg('');
     try {
       const supabase = await getSupabaseBrowserClientWithRetry();
-      
-      if (editingCalendar) {
-        // Update
-        const { error } = await supabase
-          .from('calendars')
-          .update({
-            name,
-            timezone,
-            default_capacity: defaultCapacity,
-            business_hours: businessHours,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', editingCalendar.id);
-        
-        if (error) throw error;
-      } else {
-        // Create
-        const { error } = await supabase
-          .from('calendars')
-          .insert({
-            name,
-            timezone,
-            default_capacity: defaultCapacity,
-            business_hours: businessHours,
-          });
-        
-        if (error) throw error;
-      }
-      
+      const { error } = await supabase.from('calendars').insert({
+        name, timezone, default_capacity: defaultCapacity, business_hours: businessHours,
+      });
+      if (error) throw error;
       setDialogOpen(false);
-      loadCalendars();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : '保存失败，请重试';
-      setErrorMsg(message);
-      console.error('Failed to save calendar:', error);
+      await loadCalendars();
+    } catch (e: unknown) {
+      setErrorMsg(e instanceof Error ? e.message : '创建失败');
     } finally {
       setSaving(false);
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('确定要删除这个日历吗？相关的服务和预约也会被删除。')) return;
+    if (!confirm('确定删除此日历？相关服务和预约也会被删除。')) return;
     try {
       const supabase = await getSupabaseBrowserClientWithRetry();
-      const { error } = await supabase.from('calendars').delete().eq('id', id);
-      if (error) throw error;
-      loadCalendars();
-    } catch (error) {
-      console.error('Failed to delete calendar:', error);
+      await supabase.from('calendars').delete().eq('id', id);
+      await loadCalendars();
+    } catch (e) {
+      console.error('Delete failed:', e);
     }
   };
 
-  const updateDaySlot = (
-    day: keyof BusinessHoursConfig,
-    slotIndex: number,
-    field: 'start' | 'end',
-    value: string
-  ) => {
-    setBusinessHours((prev) => ({
+  const toggleDay = (day: keyof BusinessHoursConfig, enabled: boolean) => {
+    setBusinessHours(prev => ({
       ...prev,
-      [day]: {
-        ...prev[day],
-        slots: prev[day].slots.map((slot, idx) =>
-          idx === slotIndex ? { ...slot, [field]: value } : slot
-        ),
-      },
+      [day]: { enabled, slots: enabled ? [{ start: '09:00', end: '18:00' }] : [] },
     }));
   };
 
-  const toggleDay = (day: keyof BusinessHoursConfig, enabled: boolean) => {
-    setBusinessHours((prev) => ({
+  const updateDaySlot = (day: keyof BusinessHoursConfig, idx: number, field: 'start' | 'end', value: string) => {
+    setBusinessHours(prev => ({
       ...prev,
-      [day]: {
-        enabled,
-        slots: enabled ? [{ start: '09:00', end: '18:00' }] : [],
-      },
+      [day]: { ...prev[day], slots: prev[day].slots.map((s, i) => i === idx ? { ...s, [field]: value } : s) },
     }));
   };
 
   const addSlot = (day: keyof BusinessHoursConfig) => {
-    setBusinessHours((prev) => ({
+    setBusinessHours(prev => ({
       ...prev,
-      [day]: {
-        ...prev[day],
-        slots: [...prev[day].slots, { start: '09:00', end: '12:00' }],
-      },
+      [day]: { ...prev[day], slots: [...prev[day].slots, { start: '09:00', end: '12:00' }] },
     }));
   };
 
-  const removeSlot = (day: keyof BusinessHoursConfig, slotIndex: number) => {
-    setBusinessHours((prev) => ({
+  const removeSlot = (day: keyof BusinessHoursConfig, idx: number) => {
+    setBusinessHours(prev => ({
       ...prev,
-      [day]: {
-        ...prev[day],
-        slots: prev[day].slots.filter((_, idx) => idx !== slotIndex),
-      },
+      [day]: { ...prev[day], slots: prev[day].slots.filter((_, i) => i !== idx) },
     }));
   };
 
@@ -233,12 +151,16 @@ export default function CalendarsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">日历管理</h1>
+          <h1 className="text-3xl font-bold tracking-tight">我的日历</h1>
           <p className="text-muted-foreground mt-2">
-            创建和管理您的预约日历
+            点击日历进入详情，管理服务、查看预约、配置 API 集成
           </p>
         </div>
-        <Button onClick={openCreateDialog}>
+        <Button onClick={() => {
+          setName(''); setTimezone('Asia/Shanghai'); setDefaultCapacity(10);
+          setBusinessHours(DEFAULT_BUSINESS_HOURS); setErrorMsg('');
+          setDialogOpen(true);
+        }}>
           <Plus className="mr-2 h-4 w-4" />
           新建日历
         </Button>
@@ -246,10 +168,17 @@ export default function CalendarsPage() {
 
       {calendars.length === 0 ? (
         <Card>
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            <Calendar className="h-12 w-12 text-muted-foreground mb-4" />
-            <p className="text-muted-foreground mb-4">还没有创建日历</p>
-            <Button onClick={openCreateDialog}>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <Calendar className="h-16 w-16 text-muted-foreground/40 mb-4" />
+            <h3 className="text-lg font-medium mb-2">还没有创建日历</h3>
+            <p className="text-muted-foreground mb-6 text-center max-w-sm">
+              日历是管理预约的核心。创建日历后可以添加服务、查看预约日历视图、生成 API 集成。
+            </p>
+            <Button onClick={() => {
+              setName(''); setTimezone('Asia/Shanghai'); setDefaultCapacity(10);
+              setBusinessHours(DEFAULT_BUSINESS_HOURS); setErrorMsg('');
+              setDialogOpen(true);
+            }}>
               <Plus className="mr-2 h-4 w-4" />
               创建第一个日历
             </Button>
@@ -257,46 +186,47 @@ export default function CalendarsPage() {
         </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {calendars.map((calendar) => (
-            <Card key={calendar.id}>
+          {calendars.map((cal) => (
+            <Card
+              key={cal.id}
+              className="cursor-pointer hover:shadow-md transition-shadow group"
+              onClick={() => router.push(`/dashboard/calendars/${cal.id}`)}
+            >
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div>
-                    <CardTitle>{calendar.name}</CardTitle>
-                    <CardDescription>{calendar.timezone}</CardDescription>
+                    <CardTitle className="group-hover:text-primary transition-colors">{cal.name}</CardTitle>
+                    <CardDescription className="mt-1">{cal.timezone}</CardDescription>
                   </div>
-                  <div className="flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => openEditDialog(calendar)}
-                    >
-                      <Edit className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => handleDelete(calendar.id)}
-                    >
-                      <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
-                  </div>
+                  <Button
+                    variant="ghost" size="icon"
+                    className="opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => { e.stopPropagation(); handleDelete(cal.id); }}
+                  >
+                    <Trash2 className="h-4 w-4 text-destructive" />
+                  </Button>
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <span>同时段总容量 {calendar.default_capacity} 人</span>
+                <div className="flex items-center gap-4 text-sm text-muted-foreground mb-3">
+                  <div className="flex items-center gap-1">
+                    <Users className="h-3.5 w-3.5" />
+                    总容量 {cal.default_capacity}人
+                  </div>
                 </div>
-                <div className="mt-4 flex flex-wrap gap-1">
-                  {DAYS.map((day) => (
+                <div className="flex flex-wrap gap-1 mb-3">
+                  {DAYS.map(day => (
                     <Badge
                       key={day}
-                      variant={calendar.business_hours?.[day]?.enabled ? 'default' : 'outline'}
+                      variant={cal.business_hours?.[day]?.enabled ? 'default' : 'outline'}
                       className="text-xs"
                     >
                       {DAY_LABELS[day]}
                     </Badge>
                   ))}
+                </div>
+                <div className="flex items-center text-sm text-primary font-medium group-hover:translate-x-1 transition-transform">
+                  进入日历 <ArrowRight className="h-4 w-4 ml-1" />
                 </div>
               </CardContent>
             </Card>
@@ -304,130 +234,80 @@ export default function CalendarsPage() {
         </div>
       )}
 
+      {/* 新建日历弹窗 */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>
-              {editingCalendar ? '编辑日历' : '新建日历'}
-            </DialogTitle>
-            <DialogDescription>
-              配置日历的基本信息和营业时间
-            </DialogDescription>
+            <DialogTitle>新建日历</DialogTitle>
+            <DialogDescription>创建日历后，可以在日历详情中添加服务、查看预约、配置 API</DialogDescription>
           </DialogHeader>
 
           <div className="space-y-6 py-4">
             <div className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="name">日历名称</Label>
-                <Input
-                  id="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="例如：主日历"
-                />
+                <Input id="name" value={name} onChange={e => setName(e.target.value)} placeholder="例如：我的按摩店" />
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="timezone">时区</Label>
-                <Select value={timezone} onValueChange={setTimezone}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TIMEZONES.map((tz) => (
-                      <SelectItem key={tz} value={tz}>
-                        {tz}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>时区</Label>
+                  <Select value={timezone} onValueChange={setTimezone}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {TIMEZONES.map(tz => <SelectItem key={tz} value={tz}>{tz}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="capacity">同时段总容量</Label>
-                <Input
-                  id="capacity"
-                  type="number"
-                  min={1}
-                  value={defaultCapacity}
-                  onChange={(e) => setDefaultCapacity(parseInt(e.target.value) || 1)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  同一时间段内，全店最多同时接待的客户总数。例如按摩店有10个技师，填10。这是所有服务共享的全局上限，具体服务的容量在服务项目中单独设置。
-                </p>
+                <div className="space-y-2">
+                  <Label>同时段总容量</Label>
+                  <Input type="number" min={1} value={defaultCapacity} onChange={e => setDefaultCapacity(parseInt(e.target.value) || 1)} />
+                  <p className="text-xs text-muted-foreground">
+                    全店同一时段最多接待的客户总数
+                  </p>
+                </div>
               </div>
             </div>
 
             <div className="space-y-4">
               <Label>营业时间</Label>
-              <div className="space-y-4">
-                {DAYS.map((day) => (
-                  <div key={day} className="flex items-start gap-4">
-                    <div className="flex items-center gap-2 w-20">
-                      <Switch
-                        checked={businessHours[day]?.enabled || false}
-                        onCheckedChange={(checked) => toggleDay(day, checked)}
-                      />
-                      <span className="text-sm">{DAY_LABELS[day]}</span>
-                    </div>
-                    {businessHours[day]?.enabled && (
-                      <div className="flex-1 space-y-2">
-                        {businessHours[day].slots.map((slot, idx) => (
-                          <div key={idx} className="flex items-center gap-2">
-                            <Input
-                              type="time"
-                              value={slot.start}
-                              onChange={(e) =>
-                                updateDaySlot(day, idx, 'start', e.target.value)
-                              }
-                              className="w-28"
-                            />
-                            <span className="text-muted-foreground">至</span>
-                            <Input
-                              type="time"
-                              value={slot.end}
-                              onChange={(e) =>
-                                updateDaySlot(day, idx, 'end', e.target.value)
-                              }
-                              className="w-28"
-                            />
-                            {businessHours[day].slots.length > 1 && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => removeSlot(day, idx)}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </div>
-                        ))}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => addSlot(day)}
-                        >
-                          <Plus className="mr-1 h-3 w-3" />
-                          添加时段
-                        </Button>
-                      </div>
-                    )}
+              {DAYS.map(day => (
+                <div key={day} className="flex items-start gap-4">
+                  <div className="flex items-center gap-2 w-20">
+                    <Switch checked={businessHours[day]?.enabled || false} onCheckedChange={v => toggleDay(day, v)} />
+                    <span className="text-sm">{DAY_LABELS[day]}</span>
                   </div>
-                ))}
-              </div>
+                  {businessHours[day]?.enabled && (
+                    <div className="flex-1 space-y-2">
+                      {businessHours[day].slots.map((slot, idx) => (
+                        <div key={idx} className="flex items-center gap-2">
+                          <Input type="time" value={slot.start} onChange={e => updateDaySlot(day, idx, 'start', e.target.value)} className="w-28" />
+                          <span className="text-muted-foreground">至</span>
+                          <Input type="time" value={slot.end} onChange={e => updateDaySlot(day, idx, 'end', e.target.value)} className="w-28" />
+                          {businessHours[day].slots.length > 1 && (
+                            <Button variant="ghost" size="icon" onClick={() => removeSlot(day, idx)}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                      <Button variant="outline" size="sm" onClick={() => addSlot(day)}>
+                        <Plus className="mr-1 h-3 w-3" /> 添加时段
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
 
           <DialogFooter>
-            {errorMsg && (
-              <p className="text-sm text-destructive mr-auto">{errorMsg}</p>
-            )}
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>
-              取消
-            </Button>
+            {errorMsg && <p className="text-sm text-destructive mr-auto">{errorMsg}</p>}
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button>
             <Button onClick={handleSave} disabled={saving || !name.trim()}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              保存
+              创建
             </Button>
           </DialogFooter>
         </DialogContent>

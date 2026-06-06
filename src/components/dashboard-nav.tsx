@@ -19,18 +19,6 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet';
 import {
-  Calendar,
-  Briefcase,
-  CalendarDays,
-  Key,
-  Menu,
-  LogOut,
-  User,
-  Home,
-  FileCode,
-  type LucideIcon,
-} from 'lucide-react';
-import {
   AlertDialog,
   AlertDialogContent,
   AlertDialogHeader,
@@ -40,6 +28,14 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from '@/components/ui/alert-dialog';
+import {
+  Calendar,
+  Menu,
+  LogOut,
+  User,
+  Home,
+  type LucideIcon,
+} from 'lucide-react';
 
 interface NavItem {
   href: string;
@@ -49,11 +45,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { href: '/dashboard', label: '概览', icon: Home },
-  { href: '/dashboard/calendars', label: '日历管理', icon: Calendar },
-  { href: '/dashboard/services', label: '服务管理', icon: Briefcase },
-  { href: '/dashboard/bookings', label: '预约管理', icon: CalendarDays },
-  { href: '/dashboard/api-keys', label: 'API 密钥', icon: Key },
-  { href: '/dashboard/api-docs', label: 'API 文档', icon: FileCode },
+  { href: '/dashboard/calendars', label: '我的日历', icon: Calendar },
 ];
 
 interface NavLinkProps extends NavItem {
