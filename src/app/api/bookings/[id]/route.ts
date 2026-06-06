@@ -111,9 +111,15 @@ export async function PATCH(
     const result = await rescheduleBooking(id, calendar_id, new_start_time);
 
     if (!result.success) {
+      const statusCode = result.failReason === 'service_full' || result.failReason === 'calendar_full' ? 409 : 400;
       return NextResponse.json(
-        { success: false, error: result.error },
-        { status: 400 }
+        {
+          success: false,
+          error: result.error,
+          fail_reason: result.failReason,
+          suggested_slots: result.suggestedSlots,
+        },
+        { status: statusCode }
       );
     }
 

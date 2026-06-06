@@ -21,7 +21,6 @@ import {
   Key,
   ArrowRight,
   CheckCircle2,
-  Circle,
   Loader2,
   Sparkles,
   Clock,
@@ -29,7 +28,6 @@ import {
   Stethoscope,
   GraduationCap,
   MessageSquare,
-  Wrench,
 } from 'lucide-react';
 
 interface Template {
@@ -40,22 +38,23 @@ interface Template {
   calendar: {
     name: string;
     timezone: string;
+    /** 同时段总容量：全店同一时间段最多接待的客户总数 */
     default_capacity: number;
     business_hours: Record<string, { enabled: boolean; slots: { start: string; end: string }[] }>;
   };
-  services: { name: string; description: string; duration_minutes: number; capacity: number }[];
+  services: { name: string; description: string; duration_minutes: number; /** 该服务同时段可接待人数 */ capacity: number }[];
 }
 
 const TEMPLATES: Template[] = [
   {
     id: 'consultation',
     name: '一对一咨询',
-    description: '适合律师、顾问、教练等个人咨询服务',
+    description: '律师、顾问、教练等个人咨询服务',
     icon: <MessageSquare className="h-5 w-5" />,
     calendar: {
       name: '咨询日历',
       timezone: 'Asia/Shanghai',
-      default_capacity: 1,
+      default_capacity: 1, // 只有1个顾问，同时只能接待1人
       business_hours: {
         monday: { enabled: true, slots: [{ start: '09:00', end: '12:00' }, { start: '14:00', end: '18:00' }] },
         tuesday: { enabled: true, slots: [{ start: '09:00', end: '12:00' }, { start: '14:00', end: '18:00' }] },
@@ -75,12 +74,12 @@ const TEMPLATES: Template[] = [
   {
     id: 'medical',
     name: '医疗门诊',
-    description: '适合诊所、中医馆等医疗服务场景',
+    description: '诊所、中医馆等医疗服务场景',
     icon: <Stethoscope className="h-5 w-5" />,
     calendar: {
       name: '门诊日历',
       timezone: 'Asia/Shanghai',
-      default_capacity: 1,
+      default_capacity: 5, // 诊所同时段总容量5人（如5位医生）
       business_hours: {
         monday: { enabled: true, slots: [{ start: '08:00', end: '12:00' }, { start: '14:00', end: '17:30' }] },
         tuesday: { enabled: true, slots: [{ start: '08:00', end: '12:00' }, { start: '14:00', end: '17:30' }] },
@@ -92,20 +91,45 @@ const TEMPLATES: Template[] = [
       },
     },
     services: [
-      { name: '普通门诊', description: '常规诊疗', duration_minutes: 15, capacity: 1 },
-      { name: '专家门诊', description: '专家诊疗', duration_minutes: 20, capacity: 1 },
-      { name: '体检预约', description: '健康体检', duration_minutes: 60, capacity: 3 },
+      { name: '普通门诊', description: '常规诊疗（3位医生坐诊）', duration_minutes: 15, capacity: 3 },
+      { name: '专家门诊', description: '专家诊疗（1位专家坐诊）', duration_minutes: 20, capacity: 1 },
+      { name: '体检预约', description: '健康体检（可同时3人）', duration_minutes: 60, capacity: 3 },
+    ],
+  },
+  {
+    id: 'massage',
+    name: '按摩推拿',
+    description: '按摩店、推拿馆等多技师多项目场景',
+    icon: <Users className="h-5 w-5" />,
+    calendar: {
+      name: '门店日历',
+      timezone: 'Asia/Shanghai',
+      default_capacity: 10, // 10个技师同时段总容量
+      business_hours: {
+        monday: { enabled: true, slots: [{ start: '10:00', end: '22:00' }] },
+        tuesday: { enabled: true, slots: [{ start: '10:00', end: '22:00' }] },
+        wednesday: { enabled: true, slots: [{ start: '10:00', end: '22:00' }] },
+        thursday: { enabled: true, slots: [{ start: '10:00', end: '22:00' }] },
+        friday: { enabled: true, slots: [{ start: '10:00', end: '22:00' }] },
+        saturday: { enabled: true, slots: [{ start: '10:00', end: '23:00' }] },
+        sunday: { enabled: true, slots: [{ start: '10:00', end: '21:00' }] },
+      },
+    },
+    services: [
+      { name: '全身按摩', description: '5位按摩技师', duration_minutes: 60, capacity: 5 },
+      { name: '针灸理疗', description: '3位针灸师', duration_minutes: 45, capacity: 3 },
+      { name: '足部护理', description: '2位足疗师', duration_minutes: 60, capacity: 2 },
     ],
   },
   {
     id: 'education',
     name: '培训课程',
-    description: '适合培训机构、私教等多人课程场景',
+    description: '培训机构、私教等多人课程场景',
     icon: <GraduationCap className="h-5 w-5" />,
     calendar: {
       name: '课程日历',
       timezone: 'Asia/Shanghai',
-      default_capacity: 10,
+      default_capacity: 20, // 机构同时段最多20人
       business_hours: {
         monday: { enabled: true, slots: [{ start: '09:00', end: '21:00' }] },
         tuesday: { enabled: true, slots: [{ start: '09:00', end: '21:00' }] },
@@ -119,32 +143,7 @@ const TEMPLATES: Template[] = [
     services: [
       { name: '一对一私教', description: '个性化教学', duration_minutes: 60, capacity: 1 },
       { name: '小班课', description: '3-6人小班', duration_minutes: 90, capacity: 6 },
-      { name: '大班课', description: '10人以上团体课', duration_minutes: 120, capacity: 20 },
-    ],
-  },
-  {
-    id: 'service-shop',
-    name: '服务门店',
-    description: '适合美发、美甲、维修等服务门店',
-    icon: <Wrench className="h-5 w-5" />,
-    calendar: {
-      name: '门店日历',
-      timezone: 'Asia/Shanghai',
-      default_capacity: 1,
-      business_hours: {
-        monday: { enabled: true, slots: [{ start: '10:00', end: '20:00' }] },
-        tuesday: { enabled: true, slots: [{ start: '10:00', end: '20:00' }] },
-        wednesday: { enabled: true, slots: [{ start: '10:00', end: '20:00' }] },
-        thursday: { enabled: true, slots: [{ start: '10:00', end: '20:00' }] },
-        friday: { enabled: true, slots: [{ start: '10:00', end: '20:00' }] },
-        saturday: { enabled: true, slots: [{ start: '10:00', end: '21:00' }] },
-        sunday: { enabled: true, slots: [{ start: '10:00', end: '18:00' }] },
-      },
-    },
-    services: [
-      { name: '基础服务', description: '标准服务项目', duration_minutes: 30, capacity: 1 },
-      { name: '高级服务', description: '精品服务项目', duration_minutes: 60, capacity: 1 },
-      { name: 'VIP 服务', description: '专属定制服务', duration_minutes: 90, capacity: 1 },
+      { name: '大班课', description: '10-20人团体课', duration_minutes: 120, capacity: 20 },
     ],
   },
 ];
@@ -263,14 +262,14 @@ export default function DashboardPage() {
   const setupSteps = [
     {
       title: '创建日历',
-      description: '配置时区、营业时间和每时段可预约人数',
+      description: '配置时区、营业时间和同时段总容量（全店最多同时接待多少人）',
       href: '/dashboard/calendars',
       done: stats.hasCalendar,
       icon: <Calendar className="h-4 w-4" />,
     },
     {
       title: '添加服务项目',
-      description: '定义可预约的服务名称、时长和每时段可预约人数',
+      description: '定义服务名称、时长和每时段可预约人数（如5位按摩师填5）',
       href: '/dashboard/services',
       done: stats.hasService,
       icon: <Briefcase className="h-4 w-4" />,
@@ -454,7 +453,7 @@ export default function DashboardPage() {
                   <p className="text-xs text-muted-foreground">{template.description}</p>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Users className="h-3 w-3" />
-                    {template.calendar.default_capacity === 1 ? '一对一' : `每时段 ${template.calendar.default_capacity} 人`}
+                    总容量 {template.calendar.default_capacity} 人/时段
                   </div>
                 </button>
               ))}

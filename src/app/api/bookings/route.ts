@@ -69,11 +69,12 @@ export async function POST(request: NextRequest) {
     );
 
     if (!result.success) {
-      const statusCode = result.error?.includes('已约满') ? 409 : 400;
+      const statusCode = result.failReason === 'service_full' || result.failReason === 'calendar_full' ? 409 : 400;
       return NextResponse.json(
         {
           success: false,
           error: result.error,
+          fail_reason: result.failReason,
           suggested_slots: result.suggestedSlots,
         },
         { status: statusCode }

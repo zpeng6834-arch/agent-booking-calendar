@@ -5,7 +5,10 @@ export interface TimeSlot {
   start: string;
   end: string;
   available: boolean;
-  remainingCapacity: number;
+  /** 该服务的剩余可预约人数 */
+  remainingServiceCapacity: number;
+  /** 日历总剩余可预约人数 */
+  remainingCalendarCapacity: number;
 }
 
 export interface AvailabilityResult {
@@ -17,11 +20,17 @@ export interface BookingResult {
   success: boolean;
   booking?: Booking;
   error?: string;
+  /** 预约失败原因类型 */
+  failReason?: 'service_full' | 'calendar_full' | 'outside_business_hours' | 'other';
   suggestedSlots?: TimeSlot[];
 }
 
 /**
  * 获取指定日期范围内的可用时间槽
+ * 
+ * 双层容量校验：
+ * - 服务容量：同一时间段内，该服务的预约数不能超过 service.capacity
+ * - 日历容量：同一时间段内，该日历下所有服务的预约总数不能超过 calendar.default_capacity
  */
 export async function getAvailableSlots(
   calendar: Calendar,
@@ -32,12 +41,11 @@ export async function getAvailableSlots(
   const client = getSupabaseClient();
   const slots: TimeSlot[] = [];
   
-  // 获取该时间段内的所有预约
-  const { data: existingBookings, error: bookingsError } = await client
+  // 获取该时间段内该日历的所有预约（不仅限于当前服务，用于日历级别容量计算）
+  const { data: allCalendarBookings, error: bookingsError } = await client
     .from('bookings')
-    .select('start_time, end_time, status')
+    .select('start_time, end_time, status, service_id')
     .eq('calendar_id', calendar.id)
-    .eq('service_id', service.id)
     .in('status', ['pending', 'confirmed'])
     .gte('start_time', startDate.toISOString())
     .lt('end_time', endDate.toISOString());
@@ -48,7 +56,8 @@ export async function getAvailableSlots(
 
   const businessHours = calendar.business_hours as BusinessHoursConfig;
   const serviceDuration = service.duration_minutes;
-  const capacity = service.capacity;
+  const serviceCapacity = service.capacity;
+  const calendarCapacity = calendar.default_capacity;
   const timezone = calendar.timezone;
 
   // 遍历每一天
@@ -72,21 +81,36 @@ export async function getAvailableSlots(
           
           // 检查是否在查询范围内
           if (currentSlot >= startDate && currentSlot < endDate) {
-            // 计算已预约数量
-            const overlapping = (existingBookings || []).filter((booking) => {
+            // 计算与此时段重叠的所有预约
+            const overlapping = (allCalendarBookings || []).filter((booking) => {
               const bookingStart = new Date(booking.start_time);
               const bookingEnd = new Date(booking.end_time);
               return bookingStart < slotEndtime && bookingEnd > currentSlot;
             });
+
+            // 服务级别：只统计同一服务的预约数
+            const serviceBookedCount = overlapping.filter(
+              (b) => b.service_id === service.id
+            ).length;
             
-            const bookedCount = overlapping.length;
-            const remaining = capacity - bookedCount;
+            // 日历级别：统计该日历下所有服务的预约总数
+            const calendarBookedCount = overlapping.length;
+            
+            const remainingService = serviceCapacity - serviceBookedCount;
+            const remainingCalendar = calendarCapacity - calendarBookedCount;
+            
+            // 取两者中的较小值作为实际可用容量
+            const actualRemaining = Math.min(
+              Math.max(remainingService, 0),
+              Math.max(remainingCalendar, 0)
+            );
             
             slots.push({
               start: currentSlot.toISOString(),
               end: slotEndtime.toISOString(),
-              available: remaining > 0,
-              remainingCapacity: remaining,
+              available: actualRemaining > 0,
+              remainingServiceCapacity: Math.max(remainingService, 0),
+              remainingCalendarCapacity: Math.max(remainingCalendar, 0),
             });
           }
           
@@ -104,7 +128,13 @@ export async function getAvailableSlots(
 }
 
 /**
- * 创建预约（含容量校验）
+ * 创建预约（含双层容量校验防超卖）
+ * 
+ * 校验逻辑：
+ * 1. 检查营业时间
+ * 2. 检查服务级别容量（该服务同时段预约数 < service.capacity）
+ * 3. 检查日历级别容量（该日历同时段所有预约总数 < calendar.default_capacity）
+ * 4. 任一不满足则返回失败 + 推荐可选时间
  */
 export async function createBooking(
   calendarId: string,
@@ -125,7 +155,7 @@ export async function createBooking(
     .single();
 
   if (calError || !calendar) {
-    return { success: false, error: '日历不存在' };
+    return { success: false, error: '日历不存在', failReason: 'other' };
   }
 
   const { data: service, error: svcError } = await client
@@ -135,11 +165,11 @@ export async function createBooking(
     .single();
 
   if (svcError || !service) {
-    return { success: false, error: '服务不存在' };
+    return { success: false, error: '服务不存在', failReason: 'other' };
   }
 
   if (!service.is_active) {
-    return { success: false, error: '服务已停用' };
+    return { success: false, error: '服务已停用', failReason: 'other' };
   }
 
   const start = new Date(startTime);
@@ -151,7 +181,7 @@ export async function createBooking(
   const dayConfig = businessHours[dayOfWeek];
 
   if (!dayConfig?.enabled) {
-    return { success: false, error: '该时间段不在营业时间内' };
+    return { success: false, error: '该时间段不在营业时间内', failReason: 'outside_business_hours' };
   }
 
   // 检查时间段是否在营业时段内
@@ -163,41 +193,51 @@ export async function createBooking(
   });
 
   if (!inSlot) {
-    return { success: false, error: '该时间段不在营业时段内' };
+    return { success: false, error: '该时间段不在营业时段内', failReason: 'outside_business_hours' };
   }
 
-  // 检查容量 - 使用事务确保原子性
-  const { data: overlapping, error: overlapError } = await client
+  // ===== 双层容量校验 =====
+
+  // 1. 获取该日历同时段的所有预约（所有服务）
+  const { data: allOverlapping, error: overlapError } = await client
     .from('bookings')
-    .select('id')
+    .select('id, service_id')
     .eq('calendar_id', calendarId)
-    .eq('service_id', serviceId)
     .in('status', ['pending', 'confirmed'])
     .lt('start_time', end.toISOString())
     .gt('end_time', start.toISOString());
 
   if (overlapError) {
-    return { success: false, error: '检查可用容量失败' };
+    return { success: false, error: '检查可用容量失败', failReason: 'other' };
   }
 
-  if (overlapping && overlapping.length >= service.capacity) {
-    // 返回推荐的可用时间
-    const suggestedStart = new Date(start);
-    suggestedStart.setHours(suggestedStart.getHours() + 1);
-    const suggestedEnd = new Date(suggestedStart);
-    suggestedEnd.setDate(suggestedEnd.getDate() + 7);
-    
-    const { slots: suggestedSlots } = await getAvailableSlots(
-      calendar as Calendar,
-      service as Service,
-      suggestedStart,
-      suggestedEnd
-    );
-    
+  // 2. 服务级别容量校验
+  const serviceBookedCount = (allOverlapping || []).filter(
+    (b) => b.service_id === serviceId
+  ).length;
+
+  if (serviceBookedCount >= service.capacity) {
+    // 服务已满，返回推荐时间
+    const suggested = await getSuggestedSlots(calendar, service, start);
     return {
       success: false,
-      error: '该时间段已约满',
-      suggestedSlots: suggestedSlots.filter(s => s.available).slice(0, 5),
+      error: `该服务此时段已约满（${serviceBookedCount}/${service.capacity}），请选择其他时间`,
+      failReason: 'service_full',
+      suggestedSlots: suggested,
+    };
+  }
+
+  // 3. 日历级别容量校验
+  const calendarBookedCount = (allOverlapping || []).length;
+
+  if (calendarBookedCount >= calendar.default_capacity) {
+    // 日历总容量已满，返回推荐时间
+    const suggested = await getSuggestedSlots(calendar, service, start);
+    return {
+      success: false,
+      error: `该时段全店预约已满（${calendarBookedCount}/${calendar.default_capacity}），请选择其他时间`,
+      failReason: 'calendar_full',
+      suggestedSlots: suggested,
     };
   }
 
@@ -219,7 +259,7 @@ export async function createBooking(
     .single();
 
   if (insertError) {
-    return { success: false, error: '创建预约失败' };
+    return { success: false, error: '创建预约失败', failReason: 'other' };
   }
 
   return { success: true, booking: booking as Booking };
@@ -243,18 +283,18 @@ export async function cancelBooking(bookingId: string, calendarId: string): Prom
     .maybeSingle();
 
   if (updateError) {
-    return { success: false, error: '取消预约失败' };
+    return { success: false, error: '取消预约失败', failReason: 'other' };
   }
 
   if (!booking) {
-    return { success: false, error: '预约不存在或无权操作' };
+    return { success: false, error: '预约不存在或无权操作', failReason: 'other' };
   }
 
   return { success: true, booking: booking as Booking };
 }
 
 /**
- * 改期预约
+ * 改期预约（含双层容量校验）
  */
 export async function rescheduleBooking(
   bookingId: string,
@@ -266,45 +306,71 @@ export async function rescheduleBooking(
   // 获取原预约
   const { data: original, error: originalError } = await client
     .from('bookings')
-    .select('*, services(duration_minutes)')
+    .select('*')
     .eq('id', bookingId)
     .eq('calendar_id', calendarId)
     .maybeSingle();
 
   if (originalError || !original) {
-    return { success: false, error: '预约不存在或无权操作' };
+    return { success: false, error: '预约不存在或无权操作', failReason: 'other' };
   }
 
-  const service = original.services as { duration_minutes: number };
-  const newStart = new Date(newStartTime);
-  const newEnd = new Date(newStart.getTime() + service.duration_minutes * 60000);
+  // 获取服务信息以计算新结束时间
+  const { data: serviceData } = await client
+    .from('services')
+    .select('duration_minutes, capacity')
+    .eq('id', original.service_id)
+    .single();
 
-  // 检查新时间段的容量（排除当前预约）
-  const { data: overlapping, error: overlapError } = await client
+  const durationMinutes = serviceData?.duration_minutes || 60;
+  const serviceCapacity = serviceData?.capacity || 1;
+  const newStart = new Date(newStartTime);
+  const newEnd = new Date(newStart.getTime() + durationMinutes * 60000);
+
+  // 获取日历容量
+  const { data: calendarData } = await client
+    .from('calendars')
+    .select('default_capacity')
+    .eq('id', calendarId)
+    .single();
+  const calendarCapacity = calendarData?.default_capacity || 1;
+
+  // 获取新时间段的所有重叠预约（排除当前预约）
+  const { data: allOverlapping, error: overlapError } = await client
     .from('bookings')
-    .select('id')
+    .select('id, service_id')
     .eq('calendar_id', calendarId)
-    .eq('service_id', original.service_id)
     .in('status', ['pending', 'confirmed'])
     .neq('id', bookingId)
     .lt('start_time', newEnd.toISOString())
     .gt('end_time', newStart.toISOString());
 
   if (overlapError) {
-    return { success: false, error: '检查可用容量失败' };
+    return { success: false, error: '检查可用容量失败', failReason: 'other' };
   }
 
-  // 获取服务的容量
-  const { data: serviceData } = await client
-    .from('services')
-    .select('capacity')
-    .eq('id', original.service_id)
-    .single();
+  // 服务级别容量校验
+  const serviceBookedCount = (allOverlapping || []).filter(
+    (b) => b.service_id === original.service_id
+  ).length;
 
-  const capacity = serviceData?.capacity || 1;
+  if (serviceBookedCount >= serviceCapacity) {
+    return { 
+      success: false, 
+      error: `新时段该服务已约满（${serviceBookedCount}/${serviceCapacity}）`, 
+      failReason: 'service_full' 
+    };
+  }
 
-  if (overlapping && overlapping.length >= capacity) {
-    return { success: false, error: '新时间段已约满' };
+  // 日历级别容量校验
+  const calendarBookedCount = (allOverlapping || []).length;
+
+  if (calendarBookedCount >= calendarCapacity) {
+    return { 
+      success: false, 
+      error: `新时段全店预约已满（${calendarBookedCount}/${calendarCapacity}）`, 
+      failReason: 'calendar_full' 
+    };
   }
 
   // 更新预约时间
@@ -320,10 +386,33 @@ export async function rescheduleBooking(
     .single();
 
   if (updateError) {
-    return { success: false, error: '改期失败' };
+    return { success: false, error: '改期失败', failReason: 'other' };
   }
 
   return { success: true, booking: booking as Booking };
+}
+
+/**
+ * 获取推荐可选时间槽
+ */
+async function getSuggestedSlots(
+  calendar: Calendar,
+  service: Service,
+  afterTime: Date
+): Promise<TimeSlot[]> {
+  const suggestedStart = new Date(afterTime);
+  suggestedStart.setHours(suggestedStart.getHours() + 1);
+  const suggestedEnd = new Date(suggestedStart);
+  suggestedEnd.setDate(suggestedEnd.getDate() + 7);
+  
+  const { slots } = await getAvailableSlots(
+    calendar,
+    service,
+    suggestedStart,
+    suggestedEnd
+  );
+  
+  return slots.filter(s => s.available).slice(0, 5);
 }
 
 // 辅助函数

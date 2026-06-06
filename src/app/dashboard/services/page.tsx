@@ -282,7 +282,7 @@ export default function ServicesPage() {
                   </div>
                   <div className="flex items-center gap-1 text-muted-foreground">
                     <Users className="h-4 w-4" />
-                    每时段 {service.capacity} 人
+                    可预约 {service.capacity} 人
                   </div>
                 </div>
               </CardContent>
@@ -363,7 +363,7 @@ export default function ServicesPage() {
                   onChange={(e) => setCapacity(parseInt(e.target.value) || 1)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  同一时间段最多接受多少预约（1 = 一对一，5 = 可同时5人）
+                  该服务在同一时间段最多可接待的客户数。不能超过日历总容量。例如：按摩店共10个技师，其中5人负责按摩，则按摩服务的容量填5。
                 </p>
               </div>
             </div>

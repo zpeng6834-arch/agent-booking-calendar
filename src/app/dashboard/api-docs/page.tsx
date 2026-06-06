@@ -95,7 +95,8 @@ export default function ApiDocsPage() {
                                 start: { type: 'string', format: 'date-time' },
                                 end: { type: 'string', format: 'date-time' },
                                 available: { type: 'boolean' },
-                                remaining_capacity: { type: 'integer' },
+                                remaining_service_capacity: { type: 'integer', description: '该服务剩余可预约人数' },
+                                remaining_calendar_capacity: { type: 'integer', description: '日历总剩余容量' },
                               },
                             },
                           },
@@ -134,7 +135,7 @@ export default function ApiDocsPage() {
           },
           responses: {
             '201': { description: '预约创建成功' },
-            '409': { description: '时间段已约满，返回建议时间' },
+            '409': { description: '时间段已约满（fail_reason: service_full 或 calendar_full），返回建议时间' },
           },
         },
       },
@@ -175,6 +176,19 @@ export default function ApiDocsPage() {
 
 你是一个预约助手，帮助用户完成预约相关操作。
 
+## 容量模型（重要）
+
+本系统采用双层容量模型：
+- **日历总容量**（calendar_capacity）：同一时间段内，全店所有服务合计最多可接待的客户总数
+- **服务容量**（service_capacity）：同一时间段内，某个具体服务最多可接待的客户数
+
+预约时两层约束同时生效：
+- 某服务的预约数不能超过该服务的容量
+- 该日历下所有服务的预约总数不能超过日历总容量
+
+示例：按摩店日历总容量=10（10个技师），其中按摩服务容量=5（5位按摩师），针灸服务容量=3（3位针灸师）。
+如果按摩已约5人、针灸已约3人，则总预约8人，虽然针灸还有空位但总容量只剩2人，所以针灸最多只能再约2人。
+
 ## 可用 API
 
 ### 1. 查询可预约时间
@@ -184,6 +198,7 @@ export default function ApiDocsPage() {
   - service_id: 服务 ID（必需）
   - date: 起始日期（可选，默认今天）
   - days: 查询天数（可选，默认7天）
+- 返回: 每个时间槽包含 remaining_service_capacity 和 remaining_calendar_capacity
 - 用途: 查询可预约的时间槽
 
 ### 2. 创建预约
@@ -196,7 +211,9 @@ export default function ApiDocsPage() {
   - customer_email: 客户邮箱
   - customer_phone: 客户电话（可选）
   - notes: 备注（可选）
-- 响应: 成功返回预约详情，失败返回建议时间
+- 响应:
+  - 成功: 返回预约详情
+  - 失败: fail_reason 为 service_full（服务约满）或 calendar_full（全店约满），同时返回 suggested_slots 推荐其他时间
 
 ### 3. 取消预约
 - 端点: DELETE /api/bookings/{id}
@@ -215,7 +232,10 @@ export default function ApiDocsPage() {
 
 1. 用户请求预约 → 调用查询可预约时间 API
 2. 选择时间 → 调用创建预约 API
-3. 若创建失败（已约满）→ 向用户展示返回的建议时间
+3. 若创建失败 → 根据 fail_reason 区分原因：
+   - service_full: 该服务约满，建议换其他时间或换其他服务
+   - calendar_full: 全店约满，只能建议换其他时间
+   - 向用户展示返回的 suggested_slots
 4. 用户需要取消/改期 → 调用对应 API
 
 ## 认证
@@ -228,9 +248,9 @@ ${calendars.length > 0 ? calendars.map(cal =>
   `### 日历: ${cal.name}
 - ID: ${cal.id}
 - 时区: ${cal.timezone}
-- 默认容量: ${cal.default_capacity}
+- 同时段总容量: ${cal.default_capacity}（全店最多同时接待 ${cal.default_capacity} 人）
 ${services.filter(s => s.calendar_id === cal.id).map(s => 
-  `  - 服务: ${s.name} (ID: ${s.id}, 时长: ${s.duration_minutes}分钟, 容量: ${s.capacity})`
+  `  - 服务: ${s.name} (ID: ${s.id}, 时长: ${s.duration_minutes}分钟, 服务容量: ${s.capacity}人)`
 ).join('\n')}`
 ).join('\n\n') : '请先创建日历和服务'}
 `;
