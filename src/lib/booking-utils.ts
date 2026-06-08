@@ -139,7 +139,7 @@ export async function getAvailableSlots(
     .lt('end_time', endDate.toISOString());
 
   if (bookingsError) {
-    return { slots: [], error: '获取预约数据失败' };
+    return { slots: [], error: `获取预约数据失败: ${bookingsError.message}` };
   }
 
   const businessHours = calendar.business_hours as BusinessHoursConfig;
@@ -258,7 +258,7 @@ export async function createBooking(
     .single();
 
   if (calError || !calendar) {
-    return { success: false, error: '日历不存在', failReason: 'other' };
+    return { success: false, error: calError ? `日历查询失败: ${calError.message}` : '日历不存在', failReason: 'other' };
   }
 
   const { data: service, error: svcError } = await client
@@ -268,7 +268,7 @@ export async function createBooking(
     .single();
 
   if (svcError || !service) {
-    return { success: false, error: '服务不存在', failReason: 'other' };
+    return { success: false, error: svcError ? `服务查询失败: ${svcError.message}` : '服务不存在', failReason: 'other' };
   }
 
   if (!service.is_active) {
@@ -342,7 +342,7 @@ export async function createBooking(
     .gt('end_time', start.toISOString());
 
   if (overlapError) {
-    return { success: false, error: '检查可用容量失败', failReason: 'other' };
+    return { success: false, error: `检查可用容量失败: ${overlapError.message}`, failReason: 'other' };
   }
 
   // 2. 服务级别容量校验
@@ -393,7 +393,7 @@ export async function createBooking(
     .single();
 
   if (insertError) {
-    return { success: false, error: '创建预约失败', failReason: 'other' };
+    return { success: false, error: `创建预约失败: ${insertError.message}`, failReason: 'other' };
   }
 
   return { success: true, booking: booking as Booking };
@@ -417,7 +417,7 @@ export async function cancelBooking(bookingId: string, calendarId: string): Prom
     .maybeSingle();
 
   if (updateError) {
-    return { success: false, error: '取消预约失败', failReason: 'other' };
+    return { success: false, error: `取消预约失败: ${updateError.message}`, failReason: 'other' };
   }
 
   if (!booking) {
@@ -446,7 +446,7 @@ export async function rescheduleBooking(
     .maybeSingle();
 
   if (originalError || !original) {
-    return { success: false, error: '预约不存在或无权操作', failReason: 'other' };
+    return { success: false, error: originalError ? `查询预约失败: ${originalError.message}` : '预约不存在或无权操作', failReason: 'other' };
   }
 
   // 获取服务信息以计算新结束时间
@@ -513,7 +513,7 @@ export async function rescheduleBooking(
     .gt('end_time', newStart.toISOString());
 
   if (overlapError) {
-    return { success: false, error: '检查可用容量失败', failReason: 'other' };
+    return { success: false, error: `检查可用容量失败: ${overlapError.message}`, failReason: 'other' };
   }
 
   // 服务级别容量校验
@@ -553,7 +553,7 @@ export async function rescheduleBooking(
     .single();
 
   if (updateError) {
-    return { success: false, error: '改期失败', failReason: 'other' };
+    return { success: false, error: `改期失败: ${updateError.message}`, failReason: 'other' };
   }
 
   return { success: true, booking: booking as Booking };

@@ -85,10 +85,11 @@ export async function GET(
         created_at: booking.created_at,
       },
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Get booking API error:', error);
     return NextResponse.json(
-      { success: false, error: '服务器错误' },
+      { success: false, error: `查询预约失败: ${message}` },
       { status: 500 }
     );
   }
@@ -143,10 +144,11 @@ export async function DELETE(
         message: '预约已取消',
       },
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Cancel booking API error:', error);
     return NextResponse.json(
-      { success: false, error: '服务器错误' },
+      { success: false, error: `取消预约失败: ${message}` },
       { status: 500 }
     );
   }
@@ -233,10 +235,11 @@ export async function PATCH(
         message: '预约已改期',
       },
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Reschedule booking API error:', error);
     return NextResponse.json(
-      { success: false, error: '服务器错误' },
+      { success: false, error: `改期预约失败: ${message}` },
       { status: 500 }
     );
   }

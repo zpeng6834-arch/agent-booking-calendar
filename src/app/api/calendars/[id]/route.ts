@@ -50,10 +50,11 @@ export async function GET(
         business_hours: formattedHours,
       },
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Calendar metadata API error:', error);
     return NextResponse.json(
-      { success: false, error: '服务器错误' },
+      { success: false, error: `获取日历信息失败: ${message}` },
       { status: 500 }
     );
   }

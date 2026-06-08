@@ -30,7 +30,7 @@ export async function authenticate(): Promise<AuthResult> {
       .maybeSingle();
 
     if (keyError) {
-      return { userId: '', error: '认证服务错误' };
+      return { userId: '', error: `认证服务错误: ${keyError.message}` };
     }
 
     if (!keyData) {
@@ -78,7 +78,7 @@ export async function getUserCalendar(userId: string, calendarId: string) {
     .maybeSingle();
 
   if (error) {
-    return { calendar: null, error: '获取日历失败' };
+    return { calendar: null, error: `获取日历失败: ${error.message}` };
   }
 
   if (!data) {
@@ -102,7 +102,7 @@ export async function getUserService(userId: string, serviceId: string) {
     .maybeSingle();
 
   if (error) {
-    return { service: null, error: '获取服务失败' };
+    return { service: null, error: `获取服务失败: ${error.message}` };
   }
 
   if (!data) {

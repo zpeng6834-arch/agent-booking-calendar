@@ -61,10 +61,11 @@ export async function GET(
         available_count: services?.filter(s => s.is_active).length || 0,
       },
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('List services API error:', error);
     return NextResponse.json(
-      { success: false, error: '服务器错误' },
+      { success: false, error: `获取服务列表失败: ${message}` },
       { status: 500 }
     );
   }

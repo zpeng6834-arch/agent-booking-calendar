@@ -144,10 +144,11 @@ export async function POST(request: NextRequest) {
         status: result.booking?.status,
       },
     }, { status: 201 });
-  } catch (error) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Create booking API error:', error);
     return NextResponse.json(
-      { success: false, error: '服务器错误' },
+      { success: false, error: `创建预约失败: ${message}` },
       { status: 500 }
     );
   }
@@ -235,10 +236,11 @@ export async function GET(request: NextRequest) {
         total: bookings?.length || 0,
       },
     });
-  } catch (error) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('List bookings API error:', error);
     return NextResponse.json(
-      { success: false, error: '服务器错误' },
+      { success: false, error: `获取预约列表失败: ${message}` },
       { status: 500 }
     );
   }

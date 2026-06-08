@@ -201,10 +201,11 @@ export async function GET(request: NextRequest) {
         },
       });
     }
-  } catch (error) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     console.error('Availability API error:', error);
     return NextResponse.json(
-      { success: false, error: '服务器错误' },
+      { success: false, error: `查询可预约时间失败: ${message}` },
       { status: 500 }
     );
   }
