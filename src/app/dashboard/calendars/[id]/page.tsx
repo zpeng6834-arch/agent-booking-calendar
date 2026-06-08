@@ -534,9 +534,9 @@ export default function CalendarDetailPage() {
 
     const activeServices = services.filter(s => s.is_active);
 
-    // 生成 OpenAPI Schema
+    // 生成 OpenAPI Schema (3.0.3 兼容性更好)
     const schema = {
-      openapi: '3.1.0',
+      openapi: '3.0.3',
       info: {
         title: `${calendar.name} - 预约 API`,
         version: '1.0.0',
@@ -549,19 +549,11 @@ export default function CalendarDetailPage() {
           get: {
             summary: '获取日历元数据',
             description: '获取日历的营业时间、时区、容量等规则信息。Agent 应先调用此接口了解日历规则。',
+            operationId: 'getCalendar',
             responses: {
               '200': {
                 description: '日历元数据',
-                content: { 'application/json': { schema: { type: 'object', properties: {
-                  success: { type: 'boolean' },
-                  data: { type: 'object', properties: {
-                    id: { type: 'string', description: '日历ID' },
-                    name: { type: 'string', description: '日历名称' },
-                    timezone: { type: 'string', description: '时区' },
-                    capacity_per_slot: { type: 'integer', description: '同时段总容量' },
-                    business_hours: { type: 'object', description: '营业时间' },
-                  }},
-                }}}}
+                content: { 'application/json': { schema: { '$ref': '#/components/schemas/CalendarResponse' } } },
               },
             },
           },
@@ -570,23 +562,11 @@ export default function CalendarDetailPage() {
           get: {
             summary: '获取服务列表',
             description: '获取该日历下所有可预约的服务，包括服务名称、时长、容量等。Agent 必须先获取服务列表才能知道可预约什么。',
+            operationId: 'listServices',
             responses: {
               '200': {
                 description: '服务列表',
-                content: { 'application/json': { schema: { type: 'object', properties: {
-                  success: { type: 'boolean' },
-                  data: { type: 'object', properties: {
-                    calendar_id: { type: 'string' },
-                    services: { type: 'array', items: { type: 'object', properties: {
-                      id: { type: 'string', description: '服务ID，创建预约时需要此ID' },
-                      name: { type: 'string', description: '服务名称' },
-                      description: { type: 'string' },
-                      duration_minutes: { type: 'integer', description: '服务时长（分钟）' },
-                      capacity_per_slot: { type: 'integer', description: '每时段可预约人数' },
-                      is_available: { type: 'boolean', description: '是否可预约' },
-                    }}},
-                  }},
-                }}}}
+                content: { 'application/json': { schema: { '$ref': '#/components/schemas/ServicesResponse' } } },
               },
             },
           },
@@ -595,6 +575,7 @@ export default function CalendarDetailPage() {
           get: {
             summary: '查询可预约时间',
             description: '查询指定日历和服务的可用时间段。service_id 可选，不传则返回所有服务的时间。',
+            operationId: 'getAvailability',
             parameters: [
               { name: 'calendar_id', in: 'query', required: true, schema: { type: 'string', default: calId }, description: '日历ID' },
               { name: 'service_id', in: 'query', required: false, schema: { type: 'string' }, description: '服务ID（可选，不传返回所有服务概览）' },
@@ -604,19 +585,7 @@ export default function CalendarDetailPage() {
             responses: {
               '200': {
                 description: '可用时间列表',
-                content: { 'application/json': { schema: { type: 'object', properties: {
-                  success: { type: 'boolean' },
-                  data: { type: 'object', properties: {
-                    service: { type: 'object', description: '服务信息（指定service_id时返回）' },
-                    services: { type: 'array', description: '所有服务的可用时间（未指定service_id时返回）' },
-                    available_slots: { type: 'array', items: { type: 'object', properties: {
-                      start_time: { type: 'string', format: 'date-time' },
-                      end_time: { type: 'string', format: 'date-time' },
-                      remaining_service_capacity: { type: 'integer' },
-                      remaining_calendar_capacity: { type: 'integer' },
-                    }}},
-                  }},
-                }}}}
+                content: { 'application/json': { schema: { '$ref': '#/components/schemas/AvailabilityResponse' } } },
               },
             },
           },
@@ -625,68 +594,245 @@ export default function CalendarDetailPage() {
           post: {
             summary: '创建预约',
             description: '为客户创建预约。创建前应先调用 availability 接口确认时间可用。如果预约失败，响应中会包含 fail_reason 和 suggested_slots。',
+            operationId: 'createBooking',
             requestBody: {
               required: true,
-              content: { 'application/json': { schema: {
-                type: 'object',
-                required: ['calendar_id', 'service_id', 'start_time', 'customer_name', 'customer_email'],
-                properties: {
-                  calendar_id: { type: 'string', default: calId },
-                  service_id: { type: 'string', description: '从服务列表获取' },
-                  start_time: { type: 'string', format: 'date-time', description: '从可用时间中选择' },
-                  customer_name: { type: 'string' },
-                  customer_email: { type: 'string', format: 'email' },
-                  customer_phone: { type: 'string' },
-                  notes: { type: 'string' },
-                },
-              } } },
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/CreateBookingRequest' } } },
             },
             responses: {
-              '201': { description: '预约创建成功' },
-              '409': { description: '预约失败（容量已满/重复预约），返回 fail_reason + suggested_slots' },
+              '201': {
+                description: '预约创建成功',
+                content: { 'application/json': { schema: { '$ref': '#/components/schemas/BookingResponse' } } },
+              },
+              '409': {
+                description: '预约失败（容量已满/重复预约），返回 fail_reason + suggested_slots',
+                content: { 'application/json': { schema: { '$ref': '#/components/schemas/BookingFailResponse' } } },
+              },
             },
           },
           get: {
             summary: '查询预约列表',
             description: '查询某日历下的预约记录，可按客户邮箱筛选',
+            operationId: 'listBookings',
             parameters: [
               { name: 'calendar_id', in: 'query', required: true, schema: { type: 'string' } },
-              { name: 'customer_email', in: 'query', schema: { type: 'string', description: '按客户邮箱筛选' },
-            }],
+              { name: 'customer_email', in: 'query', schema: { type: 'string', description: '按客户邮箱筛选' } },
+            ],
+            responses: {
+              '200': {
+                description: '预约列表',
+                content: { 'application/json': { schema: { '$ref': '#/components/schemas/BookingListResponse' } } },
+              },
+            },
           },
         },
         '/api/bookings/{id}': {
           get: {
             summary: '查询预约详情',
-            parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+            operationId: 'getBooking',
+            parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' }, description: '预约ID' }],
+            responses: {
+              '200': {
+                description: '预约详情',
+                content: { 'application/json': { schema: { '$ref': '#/components/schemas/BookingResponse' } } },
+              },
+            },
           },
           patch: {
             summary: '改期预约',
-            parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+            operationId: 'rescheduleBooking',
+            parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' }, description: '预约ID' }],
             requestBody: {
               required: true,
-              content: { 'application/json': { schema: {
-                type: 'object',
-                required: ['calendar_id', 'new_start_time'],
-                properties: {
-                  calendar_id: { type: 'string' },
-                  new_start_time: { type: 'string', format: 'date-time', description: '新的开始时间' },
-                },
-              } } },
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/RescheduleRequest' } } },
+            },
+            responses: {
+              '200': {
+                description: '改期成功',
+                content: { 'application/json': { schema: { '$ref': '#/components/schemas/BookingResponse' } } },
+              },
             },
           },
           delete: {
             summary: '取消预约',
+            operationId: 'cancelBooking',
             parameters: [
-              { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
-              { name: 'calendar_id', in: 'query', required: true, schema: { type: 'string' } },
+              { name: 'id', in: 'path', required: true, schema: { type: 'string' }, description: '预约ID' },
+              { name: 'calendar_id', in: 'query', required: true, schema: { type: 'string' }, description: '日历ID' },
             ],
+            responses: {
+              '200': {
+                description: '取消成功',
+                content: { 'application/json': { schema: { type: 'object', properties: {
+                  success: { type: 'boolean' },
+                  message: { type: 'string' },
+                } } } },
+              },
+            },
           },
         },
       },
       components: {
         securitySchemes: {
           BearerAuth: { type: 'http', scheme: 'bearer', description: '使用 API Key 作为 Bearer Token' },
+        },
+        schemas: {
+          BusinessHoursSlot: {
+            type: 'object',
+            properties: {
+              start: { type: 'string', description: '开始时间，如 09:00' },
+              end: { type: 'string', description: '结束时间，如 21:00' },
+            },
+            required: ['start', 'end'],
+          },
+          DayBusinessHours: {
+            type: 'object',
+            properties: {
+              enabled: { type: 'boolean', description: '是否营业' },
+              slots: { type: 'array', items: { '$ref': '#/components/schemas/BusinessHoursSlot' } },
+            },
+            required: ['enabled'],
+          },
+          CalendarResponse: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              data: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', description: '日历ID' },
+                  name: { type: 'string', description: '日历名称' },
+                  timezone: { type: 'string', description: '时区，如 Asia/Shanghai' },
+                  capacity_per_slot: { type: 'integer', description: '同时段总容量' },
+                  business_hours: {
+                    type: 'object',
+                    description: '营业时间，key为星期几(monday-sunday)',
+                    additionalProperties: { '$ref': '#/components/schemas/DayBusinessHours' },
+                  },
+                  note: { type: 'string', description: '时区说明' },
+                },
+              },
+            },
+          },
+          ServiceItem: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: '服务ID，创建预约时需要此ID' },
+              name: { type: 'string', description: '服务名称' },
+              description: { type: 'string', description: '服务描述' },
+              duration_minutes: { type: 'integer', description: '服务时长（分钟）' },
+              capacity_per_slot: { type: 'integer', description: '每时段可预约人数' },
+              is_available: { type: 'boolean', description: '是否可预约' },
+            },
+            required: ['id', 'name', 'duration_minutes', 'capacity_per_slot'],
+          },
+          ServicesResponse: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              data: {
+                type: 'object',
+                properties: {
+                  calendar_id: { type: 'string' },
+                  services: { type: 'array', items: { '$ref': '#/components/schemas/ServiceItem' } },
+                },
+              },
+            },
+          },
+          AvailableSlot: {
+            type: 'object',
+            properties: {
+              start_time: { type: 'string', format: 'date-time', description: '开始时间(UTC ISO 8601)' },
+              end_time: { type: 'string', format: 'date-time', description: '结束时间(UTC ISO 8601)' },
+              remaining_service_capacity: { type: 'integer', description: '服务剩余容量' },
+              remaining_calendar_capacity: { type: 'integer', description: '日历剩余容量' },
+            },
+            required: ['start_time', 'end_time'],
+          },
+          ServiceAvailability: {
+            type: 'object',
+            properties: {
+              service_id: { type: 'string' },
+              service_name: { type: 'string' },
+              available_slots: { type: 'array', items: { '$ref': '#/components/schemas/AvailableSlot' } },
+            },
+          },
+          AvailabilityResponse: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              data: {
+                type: 'object',
+                properties: {
+                  calendar_id: { type: 'string' },
+                  timezone: { type: 'string', description: '日历时区' },
+                  service: { '$ref': '#/components/schemas/ServiceItem', description: '指定service_id时返回的服务信息' },
+                  services: { type: 'array', description: '所有服务的可用时间（未指定service_id时返回）', items: { '$ref': '#/components/schemas/ServiceAvailability' } },
+                  available_slots: { type: 'array', description: '可用时间段（指定service_id时返回）', items: { '$ref': '#/components/schemas/AvailableSlot' } },
+                },
+              },
+            },
+          },
+          CreateBookingRequest: {
+            type: 'object',
+            required: ['calendar_id', 'service_id', 'start_time', 'customer_name', 'customer_email'],
+            properties: {
+              calendar_id: { type: 'string', default: calId, description: '日历ID' },
+              service_id: { type: 'string', description: '从服务列表获取的服务ID' },
+              start_time: { type: 'string', format: 'date-time', description: '预约开始时间(UTC ISO 8601)，建议直接使用 available_slots 返回的时间' },
+              customer_name: { type: 'string', description: '客户姓名' },
+              customer_email: { type: 'string', format: 'email', description: '客户邮箱' },
+              customer_phone: { type: 'string', description: '客户电话（可选）' },
+              notes: { type: 'string', description: '备注（可选）' },
+            },
+          },
+          BookingData: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: '预约ID' },
+              service_id: { type: 'string' },
+              service_name: { type: 'string' },
+              start_time: { type: 'string', format: 'date-time' },
+              end_time: { type: 'string', format: 'date-time' },
+              customer_name: { type: 'string' },
+              customer_email: { type: 'string' },
+              customer_phone: { type: 'string' },
+              notes: { type: 'string' },
+              status: { type: 'string', enum: ['confirmed', 'cancelled'] },
+            },
+          },
+          BookingResponse: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              data: { '$ref': '#/components/schemas/BookingData' },
+            },
+          },
+          BookingFailResponse: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              error: { type: 'string' },
+              fail_reason: { type: 'string', enum: ['service_full', 'calendar_full', 'duplicate', 'outside_business_hours'], description: '失败原因' },
+              suggested_slots: { type: 'array', items: { '$ref': '#/components/schemas/AvailableSlot' }, description: '推荐的可用时间' },
+              agent_hint: { type: 'string', description: '给 Agent 的处理建议' },
+            },
+          },
+          BookingListResponse: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              data: { type: 'array', items: { '$ref': '#/components/schemas/BookingData' } },
+            },
+          },
+          RescheduleRequest: {
+            type: 'object',
+            required: ['calendar_id', 'new_start_time'],
+            properties: {
+              calendar_id: { type: 'string', description: '日历ID' },
+              new_start_time: { type: 'string', format: 'date-time', description: '新的开始时间(UTC ISO 8601)' },
+            },
+          },
         },
       },
     };
