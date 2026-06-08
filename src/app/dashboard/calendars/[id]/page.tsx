@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Copy, Check,
   Calendar, Settings, Key, FileText, Users, Clock, Search, X,
-  ArrowLeft, Loader2, Sparkles, AlertTriangle,
+  ArrowLeft, Loader2, Sparkles, AlertTriangle, RefreshCw,
 } from 'lucide-react';
 
 // ===================== 类型 =====================
@@ -801,13 +801,12 @@ Authorization: Bearer <API_KEY>
     setGeneratedPrompt(prompt);
     setGenerating(false);
 
-    // 记录生成时的配置摘要，用于后续变更检测
+    // 记录生成时的配置摘要（只追踪影响 API 文档的关键字段），用于后续变更检测
     const configHash = JSON.stringify({
-      name: calendar.name,
       timezone: calendar.timezone,
       capacity: calendar.default_capacity,
       hours: calendar.business_hours,
-      services: services.map(s => ({ id: s.id, name: s.name, duration: s.duration_minutes, capacity: s.capacity, active: s.is_active })),
+      services: services.filter(s => s.is_active).map(s => ({ name: s.name, duration: s.duration_minutes, capacity: s.capacity })),
     });
     setGeneratedConfigHash(configHash);
   }, [calendar, services, calId, apiBaseUrl]);
@@ -830,6 +829,15 @@ Authorization: Bearer <API_KEY>
 
   const activeServices = services.filter(s => s.is_active);
   const hasNoServices = activeServices.length === 0;
+
+  // 当前配置摘要（只追踪影响 API 文档的关键字段）
+  const currentConfigHash = JSON.stringify({
+    timezone: calendar.timezone,
+    capacity: calendar.default_capacity,
+    hours: calendar.business_hours,
+    services: activeServices.map(s => ({ name: s.name, duration: s.duration_minutes, capacity: s.capacity })),
+  });
+  const configChanged = generatedSchema !== null && generatedConfigHash !== null && currentConfigHash !== generatedConfigHash;
 
   return (
     <div className="space-y-6">
@@ -1220,33 +1228,6 @@ Authorization: Bearer <API_KEY>
               </Card>
             )}
 
-            {/* 配置变更提示 */}
-            {generatedSchema && generatedConfigHash && (() => {
-              const currentHash = JSON.stringify({
-                name: calendar.name,
-                timezone: calendar.timezone,
-                capacity: calendar.default_capacity,
-                hours: calendar.business_hours,
-                services: services.map(s => ({ id: s.id, name: s.name, duration: s.duration_minutes, capacity: s.capacity, active: s.is_active })),
-              });
-              return currentHash !== generatedConfigHash;
-            })() && (
-              <Card className="border-amber-500/50 bg-amber-500/5">
-                <CardContent className="pt-4">
-                  <div className="flex items-start gap-3">
-                    <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
-                    <div>
-                      <p className="font-medium">日历配置已更新</p>
-                      <p className="text-sm text-muted-foreground mt-1">营业时间、容量或服务信息发生了变化，当前生成的文档可能已过时。建议重新生成以确保 Agent 获取最新信息。</p>
-                      <Button variant="outline" size="sm" className="mt-2" onClick={generateSchemaAndPrompt} disabled={generating || hasNoServices}>
-                        <Sparkles className="h-3.5 w-3.5 mr-1" />重新生成
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
             {/* API Keys */}
             <Card>
               <CardHeader>
@@ -1317,6 +1298,8 @@ Authorization: Bearer <API_KEY>
                   >
                     {generating ? (
                       <><Loader2 className="h-4 w-4 mr-1 animate-spin" />生成中...</>
+                    ) : configChanged ? (
+                      <><RefreshCw className="h-4 w-4 mr-1" />重新生成</>
                     ) : (
                       <><Sparkles className="h-4 w-4 mr-1" />生成文档</>
                     )}
@@ -1324,6 +1307,15 @@ Authorization: Bearer <API_KEY>
                 </div>
               </CardHeader>
               <CardContent>
+                {configChanged && (
+                  <div className="flex items-start gap-3 p-3 mb-4 rounded-md bg-amber-500/10 border border-amber-500/30">
+                    <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                    <div className="text-sm">
+                      <span className="font-medium text-amber-600">配置已变更</span>
+                      <span className="text-muted-foreground ml-1">营业时间、容量或服务信息发生了变化，当前文档可能已过时，建议重新生成</span>
+                    </div>
+                  </div>
+                )}
                 {!generatedSchema && !generatedPrompt ? (
                   <div className="text-center py-8 text-muted-foreground">
                     <FileText className="h-10 w-10 mx-auto mb-3 opacity-30" />
