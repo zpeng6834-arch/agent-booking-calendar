@@ -610,36 +610,11 @@ export default function CalendarDetailPage() {
               },
             },
           },
-          get: {
-            summary: '查询预约列表',
-            description: '查询某日历下的预约记录，可按客户邮箱筛选',
-            operationId: 'listBookings',
-            parameters: [
-              { name: 'calendar_id', in: 'query', required: true, schema: { type: 'string' } },
-              { name: 'customer_email', in: 'query', schema: { type: 'string', description: '按客户邮箱筛选' } },
-            ],
-            responses: {
-              '200': {
-                description: '预约列表',
-                content: { 'application/json': { schema: { '$ref': '#/components/schemas/BookingListResponse' } } },
-              },
-            },
-          },
         },
         '/api/bookings/{id}': {
-          get: {
-            summary: '查询预约详情',
-            operationId: 'getBooking',
-            parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' }, description: '预约ID' }],
-            responses: {
-              '200': {
-                description: '预约详情',
-                content: { 'application/json': { schema: { '$ref': '#/components/schemas/BookingResponse' } } },
-              },
-            },
-          },
           patch: {
             summary: '改期预约',
+            description: '将已有预约改到新的时间。需先调用 availability 确认新时间可用。返回更新后的预约信息。',
             operationId: 'rescheduleBooking',
             parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' }, description: '预约ID' }],
             requestBody: {
@@ -655,6 +630,7 @@ export default function CalendarDetailPage() {
           },
           delete: {
             summary: '取消预约',
+            description: '取消指定预约。取消后该时段容量释放，客户会收到取消通知。',
             operationId: 'cancelBooking',
             parameters: [
               { name: 'id', in: 'path', required: true, schema: { type: 'string' }, description: '预约ID' },
@@ -666,6 +642,7 @@ export default function CalendarDetailPage() {
                 content: { 'application/json': { schema: { type: 'object', properties: {
                   success: { type: 'boolean' },
                   message: { type: 'string' },
+                  agent_hint: { type: 'string', description: '给 Agent 的后续操作建议' },
                 } } } },
               },
             },
@@ -816,13 +793,6 @@ export default function CalendarDetailPage() {
               fail_reason: { type: 'string', enum: ['service_full', 'calendar_full', 'duplicate', 'outside_business_hours'], description: '失败原因' },
               suggested_slots: { type: 'array', items: { '$ref': '#/components/schemas/AvailableSlot' }, description: '推荐的可用时间' },
               agent_hint: { type: 'string', description: '给 Agent 的处理建议' },
-            },
-          },
-          BookingListResponse: {
-            type: 'object',
-            properties: {
-              success: { type: 'boolean' },
-              data: { type: 'array', items: { '$ref': '#/components/schemas/BookingData' } },
             },
           },
           RescheduleRequest: {
