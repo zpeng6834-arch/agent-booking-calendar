@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
           agentHint = `该客户已在此时段预约了相同服务，请不要重复预约`;
           break;
         case 'outside_business_hours':
-          agentHint = `所选时间不在营业时间内，请先通过 GET /api/availability 查询可预约时间`;
+          agentHint = `所选时间不在营业时间内（${result.error}）。请先通过 GET /api/availability 查询可预约时间，start_time 请使用返回的 available_slots 中的值，或传入带时区偏移的 ISO 格式（如 2025-01-15T10:30:00+08:00）`;
           break;
         default:
           agentHint = '请检查参数后重试';

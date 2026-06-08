@@ -25,9 +25,96 @@ export interface BookingResult {
   suggestedSlots?: TimeSlot[];
 }
 
+// ===================== 时区工具函数 =====================
+
+/**
+ * 获取指定时区下的日期时间组件
+ * 使用 Intl API 进行时区转换，不依赖任何第三方库
+ */
+function getDateTimeInTimezone(date: Date, timezone: string): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  dayOfWeek: string;
+} {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    weekday: 'long',
+  });
+  const parts = formatter.formatToParts(date);
+  const get = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find(p => p.type === type)?.value || '';
+
+  return {
+    year: parseInt(get('year')),
+    month: parseInt(get('month')),
+    day: parseInt(get('day')),
+    hour: get('hour') === '24' ? 0 : parseInt(get('hour')),
+    minute: parseInt(get('minute')),
+    dayOfWeek: get('weekday').toLowerCase(),
+  };
+}
+
+/**
+ * 计算某时区在特定 UTC 时间点的偏移量（毫秒）
+ * 正值表示东区（如 +08:00 = 28800000ms）
+ */
+function getTimezoneOffsetMs(utcDate: Date, timezone: string): number {
+  const utcStr = utcDate.toLocaleString('en-US', { timeZone: 'UTC' });
+  const tzStr = utcDate.toLocaleString('en-US', { timeZone: timezone });
+  return new Date(tzStr).getTime() - new Date(utcStr).getTime();
+}
+
+/**
+ * 将日历时区下的本地时间转换为 UTC Date
+ * 例如：Asia/Shanghai 下的 "09:00" → UTC "01:00:00.000Z"（+08:00）
+ */
+function parseTimeInTimezone(date: Date, timeStr: string, timezone: string): Date {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+
+  // 获取 date 在目标时区下的日期（年月日）
+  const localDate = getDateTimeInTimezone(date, timezone);
+
+  // 创建一个 "参考 UTC 时间"：用本地时间的年月日+时分秒构造 UTC
+  const refUTC = new Date(Date.UTC(localDate.year, localDate.month - 1, localDate.day, hours, minutes, 0));
+
+  // 计算时区偏移
+  const offset = getTimezoneOffsetMs(refUTC, timezone);
+
+  // 实际 UTC = 参考 UTC - 偏移
+  return new Date(refUTC.getTime() - offset);
+}
+
+/**
+ * 获取指定日期在日历时区下的星期几
+ */
+function getDayOfWeekInTimezone(date: Date, timezone: string): keyof BusinessHoursConfig {
+  const localDate = getDateTimeInTimezone(date, timezone);
+  const dayMap: Record<string, keyof BusinessHoursConfig> = {
+    'monday': 'monday', 'tuesday': 'tuesday', 'wednesday': 'wednesday',
+    'thursday': 'thursday', 'friday': 'friday', 'saturday': 'saturday', 'sunday': 'sunday',
+  };
+  return dayMap[localDate.dayOfWeek] || 'monday';
+}
+
+// ===================== 核心逻辑 =====================
+
 /**
  * 获取指定日期范围内的可用时间槽
- * 
+ *
+ * 时区处理：
+ * - business_hours 是日历时区下的本地时间（如 "09:00" = 上海时间 9 点）
+ * - 所有数据库存储和 API 传输均使用 UTC ISO 格式
+ * - 内部自动进行时区转换
+ *
  * 双层容量校验：
  * - 服务容量：同一时间段内，该服务的预约数不能超过 service.capacity
  * - 日历容量：同一时间段内，该日历下所有服务的预约总数不能超过 calendar.default_capacity
@@ -40,7 +127,8 @@ export async function getAvailableSlots(
 ): Promise<AvailabilityResult> {
   const client = getSupabaseClient();
   const slots: TimeSlot[] = [];
-  
+  const timezone = calendar.timezone;
+
   // 获取该时间段内该日历的所有预约（不仅限于当前服务，用于日历级别容量计算）
   const { data: allCalendarBookings, error: bookingsError } = await client
     .from('bookings')
@@ -58,82 +146,97 @@ export async function getAvailableSlots(
   const serviceDuration = service.duration_minutes;
   const serviceCapacity = service.capacity;
   const calendarCapacity = calendar.default_capacity;
-  const timezone = calendar.timezone;
 
-  // 遍历每一天
-  const currentDay = new Date(startDate);
-  currentDay.setHours(0, 0, 0, 0);
-  
-  while (currentDay <= endDate) {
-    const dayOfWeek = getDayOfWeek(currentDay);
+  // 遍历每一天（在日历时区下）
+  // 使用日历时区来确定"一天"的范围
+  const currentDayUTC = new Date(startDate);
+
+  while (currentDayUTC < endDate) {
+    // 获取当前 UTC 时间在日历时区下对应的日期信息
+    const localDate = getDateTimeInTimezone(currentDayUTC, timezone);
+    const dayOfWeek = getDayOfWeekInTimezone(currentDayUTC, timezone);
     const dayConfig = businessHours[dayOfWeek];
-    
+
     if (dayConfig?.enabled && dayConfig.slots.length > 0) {
       // 遍历每个营业时段
       for (const slot of dayConfig.slots) {
-        const slotStart = parseTime(currentDay, slot.start, timezone);
-        const slotEnd = parseTime(currentDay, slot.end, timezone);
-        
+        // 使用日历时区解析营业时间 → 得到正确的 UTC 时间
+        const slotStart = parseTimeInTimezone(currentDayUTC, slot.start, timezone);
+        const slotEnd = parseTimeInTimezone(currentDayUTC, slot.end, timezone);
+
         // 生成时间段
         let currentSlot = new Date(slotStart);
         while (currentSlot.getTime() + serviceDuration * 60000 <= slotEnd.getTime()) {
-          const slotEndtime = new Date(currentSlot.getTime() + serviceDuration * 60000);
-          
+          const slotEndTime = new Date(currentSlot.getTime() + serviceDuration * 60000);
+
           // 检查是否在查询范围内
           if (currentSlot >= startDate && currentSlot < endDate) {
             // 计算与此时段重叠的所有预约
             const overlapping = (allCalendarBookings || []).filter((booking) => {
               const bookingStart = new Date(booking.start_time);
               const bookingEnd = new Date(booking.end_time);
-              return bookingStart < slotEndtime && bookingEnd > currentSlot;
+              return bookingStart < slotEndTime && bookingEnd > currentSlot;
             });
 
             // 服务级别：只统计同一服务的预约数
             const serviceBookedCount = overlapping.filter(
               (b) => b.service_id === service.id
             ).length;
-            
+
             // 日历级别：统计该日历下所有服务的预约总数
             const calendarBookedCount = overlapping.length;
-            
+
             const remainingService = serviceCapacity - serviceBookedCount;
             const remainingCalendar = calendarCapacity - calendarBookedCount;
-            
+
             // 取两者中的较小值作为实际可用容量
             const actualRemaining = Math.min(
               Math.max(remainingService, 0),
               Math.max(remainingCalendar, 0)
             );
-            
+
             slots.push({
               start: currentSlot.toISOString(),
-              end: slotEndtime.toISOString(),
+              end: slotEndTime.toISOString(),
               available: actualRemaining > 0,
               remainingServiceCapacity: Math.max(remainingService, 0),
               remainingCalendarCapacity: Math.max(remainingCalendar, 0),
             });
           }
-          
+
           // 移动到下一个时间段
           currentSlot = new Date(currentSlot.getTime() + serviceDuration * 60000);
         }
       }
     }
-    
-    // 移动到下一天
-    currentDay.setDate(currentDay.getDate() + 1);
+
+    // 移动到下一天（在日历时区下）
+    // 简单地加 24 小时，可能会重复遍历同一天（DST 边界），
+    // 但 getAvailableSlots 会自动去重（同一时间点只会生成一个 slot）
+    currentDayUTC.setDate(currentDayUTC.getDate() + 1);
+    // 重置到当天的 00:00 UTC，避免时间累积
+    currentDayUTC.setUTCHours(0, 0, 0, 0);
   }
 
-  return { slots };
+  // 去重：同一 start 时间只保留一个
+  const uniqueSlots = slots.filter((slot, index, self) =>
+    index === self.findIndex(s => s.start === slot.start)
+  );
+
+  return { slots: uniqueSlots };
 }
 
 /**
  * 创建预约（含双层容量校验防超卖）
- * 
+ *
+ * 时区处理：
+ * - start_time 可以是任何 ISO 8601 格式（含时区后缀或 UTC）
+ * - 营业时间校验基于日历时区：将 start_time 转换到日历时区后判断
+ *
  * 校验逻辑：
- * 1. 检查营业时间
- * 2. 检查服务级别容量（该服务同时段预约数 < service.capacity）
- * 3. 检查日历级别容量（该日历同时段所有预约总数 < calendar.default_capacity）
+ * 1. 检查营业时间（基于日历时区）
+ * 2. 检查服务级别容量
+ * 3. 检查日历级别容量
  * 4. 任一不满足则返回失败 + 推荐可选时间
  */
 export async function createBooking(
@@ -146,7 +249,7 @@ export async function createBooking(
   notes?: string
 ): Promise<BookingResult> {
   const client = getSupabaseClient();
-  
+
   // 获取日历和服务信息
   const { data: calendar, error: calError } = await client
     .from('calendars')
@@ -172,32 +275,42 @@ export async function createBooking(
     return { success: false, error: '服务已停用', failReason: 'other' };
   }
 
+  const timezone = calendar.timezone;
   const start = new Date(startTime);
   const end = new Date(start.getTime() + service.duration_minutes * 60000);
 
-  // 检查营业时间
-  const dayOfWeek = getDayOfWeek(start);
+  // ===== 营业时间校验（基于日历时区） =====
+  const localStart = getDateTimeInTimezone(start, timezone);
+  const localEnd = getDateTimeInTimezone(end, timezone);
+  const dayOfWeek = getDayOfWeekInTimezone(start, timezone);
   const businessHours = calendar.business_hours as BusinessHoursConfig;
   const dayConfig = businessHours[dayOfWeek];
 
   if (!dayConfig?.enabled) {
-    return { success: false, error: '该时间段不在营业时间内', failReason: 'outside_business_hours' };
+    return {
+      success: false,
+      error: `该时间段不在营业时间内（日历时区 ${timezone}：${dayOfWeek} 不营业）`,
+      failReason: 'outside_business_hours',
+    };
   }
 
-  // 检查时间段是否在营业时段内
-  const timeStr = `${start.getHours().toString().padStart(2, '0')}:${start.getMinutes().toString().padStart(2, '0')}`;
-  const endtimeStr = `${end.getHours().toString().padStart(2, '0')}:${end.getMinutes().toString().padStart(2, '0')}`;
-  
+  // 使用日历时区下的本地时间判断是否在营业时段内
+  const timeStr = `${String(localStart.hour).padStart(2, '0')}:${String(localStart.minute).padStart(2, '0')}`;
+  const endTimeStr = `${String(localEnd.hour).padStart(2, '0')}:${String(localEnd.minute).padStart(2, '0')}`;
+
   const inSlot = dayConfig.slots.some((slot) => {
-    return timeStr >= slot.start && endtimeStr <= slot.end;
+    return timeStr >= slot.start && endTimeStr <= slot.end;
   });
 
   if (!inSlot) {
-    return { success: false, error: '该时间段不在营业时段内', failReason: 'outside_business_hours' };
+    return {
+      success: false,
+      error: `该时间段不在营业时段内（日历时区 ${timezone}：${timeStr}-${endTimeStr} 不在 ${dayConfig.slots.map(s => s.start + '-' + s.end).join(', ')} 内）`,
+      failReason: 'outside_business_hours',
+    };
   }
 
   // ===== 重复预约校验 =====
-  // 同一客户（邮箱）不能在同一时间段预约同一服务
   const { data: duplicateBooking } = await client
     .from('bookings')
     .select('id')
@@ -291,10 +404,10 @@ export async function createBooking(
  */
 export async function cancelBooking(bookingId: string, calendarId: string): Promise<BookingResult> {
   const client = getSupabaseClient();
-  
+
   const { data: booking, error: updateError } = await client
     .from('bookings')
-    .update({ 
+    .update({
       status: 'cancelled',
       updated_at: new Date().toISOString(),
     })
@@ -315,7 +428,7 @@ export async function cancelBooking(bookingId: string, calendarId: string): Prom
 }
 
 /**
- * 改期预约（含双层容量校验）
+ * 改期预约（含双层容量校验，基于日历时区）
  */
 export async function rescheduleBooking(
   bookingId: string,
@@ -323,7 +436,7 @@ export async function rescheduleBooking(
   newStartTime: string
 ): Promise<BookingResult> {
   const client = getSupabaseClient();
-  
+
   // 获取原预约
   const { data: original, error: originalError } = await client
     .from('bookings')
@@ -348,13 +461,46 @@ export async function rescheduleBooking(
   const newStart = new Date(newStartTime);
   const newEnd = new Date(newStart.getTime() + durationMinutes * 60000);
 
-  // 获取日历容量
+  // ===== 营业时间校验（基于日历时区）=====
   const { data: calendarData } = await client
     .from('calendars')
-    .select('default_capacity')
+    .select('default_capacity, timezone, business_hours')
     .eq('id', calendarId)
     .single();
+
   const calendarCapacity = calendarData?.default_capacity || 1;
+  const timezone = calendarData?.timezone || 'UTC';
+  const businessHours = calendarData?.business_hours as BusinessHoursConfig | null;
+
+  if (businessHours) {
+    const localStart = getDateTimeInTimezone(newStart, timezone);
+    const localEnd = getDateTimeInTimezone(newEnd, timezone);
+    const dayOfWeek = getDayOfWeekInTimezone(newStart, timezone);
+    const dayConfig = businessHours[dayOfWeek];
+
+    if (!dayConfig?.enabled) {
+      return {
+        success: false,
+        error: `新时间段不在营业时间内（日历时区 ${timezone}）`,
+        failReason: 'outside_business_hours',
+      };
+    }
+
+    const timeStr = `${String(localStart.hour).padStart(2, '0')}:${String(localStart.minute).padStart(2, '0')}`;
+    const endTimeStr = `${String(localEnd.hour).padStart(2, '0')}:${String(localEnd.minute).padStart(2, '0')}`;
+
+    const inSlot = dayConfig.slots.some((slot) => {
+      return timeStr >= slot.start && endTimeStr <= slot.end;
+    });
+
+    if (!inSlot) {
+      return {
+        success: false,
+        error: `新时间段不在营业时段内（日历时区 ${timezone}）`,
+        failReason: 'outside_business_hours',
+      };
+    }
+  }
 
   // 获取新时间段的所有重叠预约（排除当前预约）
   const { data: allOverlapping, error: overlapError } = await client
@@ -376,10 +522,10 @@ export async function rescheduleBooking(
   ).length;
 
   if (serviceBookedCount >= serviceCapacity) {
-    return { 
-      success: false, 
-      error: `新时段该服务已约满（${serviceBookedCount}/${serviceCapacity}）`, 
-      failReason: 'service_full' 
+    return {
+      success: false,
+      error: `新时段该服务已约满（${serviceBookedCount}/${serviceCapacity}）`,
+      failReason: 'service_full'
     };
   }
 
@@ -387,10 +533,10 @@ export async function rescheduleBooking(
   const calendarBookedCount = (allOverlapping || []).length;
 
   if (calendarBookedCount >= calendarCapacity) {
-    return { 
-      success: false, 
-      error: `新时段全店预约已满（${calendarBookedCount}/${calendarCapacity}）`, 
-      failReason: 'calendar_full' 
+    return {
+      success: false,
+      error: `新时段全店预约已满（${calendarBookedCount}/${calendarCapacity}）`,
+      failReason: 'calendar_full'
     };
   }
 
@@ -425,28 +571,13 @@ async function getSuggestedSlots(
   suggestedStart.setHours(suggestedStart.getHours() + 1);
   const suggestedEnd = new Date(suggestedStart);
   suggestedEnd.setDate(suggestedEnd.getDate() + 7);
-  
+
   const { slots } = await getAvailableSlots(
     calendar,
     service,
     suggestedStart,
     suggestedEnd
   );
-  
+
   return slots.filter(s => s.available).slice(0, 5);
-}
-
-// 辅助函数
-function getDayOfWeek(date: Date): keyof BusinessHoursConfig {
-  const days: (keyof BusinessHoursConfig)[] = [
-    'sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'
-  ];
-  return days[date.getDay()];
-}
-
-function parseTime(date: Date, timeStr: string, _timezone: string): Date {
-  const [hours, minutes] = timeStr.split(':').map(Number);
-  const result = new Date(date);
-  result.setHours(hours, minutes, 0, 0);
-  return result;
 }

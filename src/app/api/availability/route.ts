@@ -106,6 +106,7 @@ export async function GET(request: NextRequest) {
         success: true,
         data: {
           calendar_id: calendarId,
+          timezone: calendar.timezone,
           service: {
             id: service.id,
             name: service.name,
@@ -125,6 +126,7 @@ export async function GET(request: NextRequest) {
             remaining_calendar_capacity: s.remainingCalendarCapacity,
           })),
           total_available_slots: availableSlots.length,
+          note: `所有时间均为 UTC ISO 格式。日历时区为 ${calendar.timezone}，营业时间已按时区转换。例如：营业时间 09:00(${calendar.timezone}) 对应 UTC 01:00(+08:00 偏移)。Agent 传 start_time 时可直接使用 available_slots 中的值，也可传入带时区偏移的 ISO 格式（如 2025-01-15T10:30:00+08:00）。`,
         },
       });
     } else {
@@ -186,6 +188,7 @@ export async function GET(request: NextRequest) {
         success: true,
         data: {
           calendar_id: calendarId,
+          timezone: calendar.timezone,
           calendar_capacity_per_slot: calendar.default_capacity,
           business_hours: formattedHours,
           date_range: {
@@ -194,6 +197,7 @@ export async function GET(request: NextRequest) {
           },
           services: servicesAvailability,
           hint: '返回所有活跃服务的可用时间。如只需查看某个服务，请添加 service_id 参数',
+          note: `所有时间均为 UTC ISO 格式。日历时区为 ${calendar.timezone}，营业时间已按时区转换。`,
         },
       });
     }

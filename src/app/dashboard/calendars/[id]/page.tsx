@@ -151,10 +151,8 @@ export default function CalendarDetailPage() {
   const [filterName, setFilterName] = useState('');
   const [filterContact, setFilterContact] = useState('');
   const [filterService, setFilterService] = useState('all');
-  const [filterStartTime, setFilterStartTime] = useState('');
-  const [filterEndTime, setFilterEndTime] = useState('');
-  const [filterCreatedStart, setFilterCreatedStart] = useState('');
-  const [filterCreatedEnd, setFilterCreatedEnd] = useState('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'cancelled'>('all');
+  const [filterDateRange, setFilterDateRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
 
   // 服务弹窗
   const [svcDialogOpen, setSvcDialogOpen] = useState(false);
@@ -207,6 +205,8 @@ export default function CalendarDetailPage() {
   const [generatedSchema, setGeneratedSchema] = useState<string | null>(null);
   const [generatedPrompt, setGeneratedPrompt] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
+  // 配置变更追踪：记录生成时的日历/服务数据摘要
+  const [generatedConfigHash, setGeneratedConfigHash] = useState<string | null>(null);
 
   // 运行时 API 域名
   const [apiBaseUrl, setApiBaseUrl] = useState('');
@@ -245,6 +245,12 @@ export default function CalendarDetailPage() {
 
   const filteredBookings = useMemo(() => {
     let result = [...bookings];
+    // 状态筛选
+    if (filterStatus === 'active') {
+      result = result.filter(b => b.status !== 'cancelled');
+    } else if (filterStatus === 'cancelled') {
+      result = result.filter(b => b.status === 'cancelled');
+    }
     if (filterName.trim()) {
       const q = filterName.trim().toLowerCase();
       result = result.filter(b => b.customer_name.toLowerCase().includes(q));
@@ -259,36 +265,26 @@ export default function CalendarDetailPage() {
     if (filterService && filterService !== 'all') {
       result = result.filter(b => b.service_id === filterService);
     }
-    if (filterStartTime) {
-      result = result.filter(b => new Date(b.start_time) >= new Date(filterStartTime));
+    if (filterDateRange.start) {
+      result = result.filter(b => new Date(b.start_time) >= new Date(filterDateRange.start));
     }
-    if (filterEndTime) {
-      const end = new Date(filterEndTime);
+    if (filterDateRange.end) {
+      const end = new Date(filterDateRange.end);
       end.setDate(end.getDate() + 1);
       result = result.filter(b => new Date(b.start_time) < end);
     }
-    if (filterCreatedStart) {
-      result = result.filter(b => new Date(b.created_at) >= new Date(filterCreatedStart));
-    }
-    if (filterCreatedEnd) {
-      const end = new Date(filterCreatedEnd);
-      end.setDate(end.getDate() + 1);
-      result = result.filter(b => new Date(b.created_at) < end);
-    }
     return result.sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
-  }, [bookings, filterName, filterContact, filterService, filterStartTime, filterEndTime, filterCreatedStart, filterCreatedEnd]);
+  }, [bookings, filterName, filterContact, filterService, filterStatus, filterDateRange]);
 
   const clearFilters = () => {
     setFilterName('');
     setFilterContact('');
     setFilterService('all');
-    setFilterStartTime('');
-    setFilterEndTime('');
-    setFilterCreatedStart('');
-    setFilterCreatedEnd('');
+    setFilterStatus('all');
+    setFilterDateRange({ start: '', end: '' });
   };
 
-  const hasFilters = filterName || filterContact || filterService !== 'all' || filterStartTime || filterEndTime || filterCreatedStart || filterCreatedEnd;
+  const hasFilters = filterName || filterContact || filterService !== 'all' || filterStatus !== 'all' || filterDateRange.start || filterDateRange.end;
 
   // ===================== 日历视图 =====================
 
@@ -309,7 +305,7 @@ export default function CalendarDetailPage() {
   const getBookingsForDate = (d: Date) => {
     const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     return bookings
-      .filter(b => String(b.start_time).startsWith(dateStr))
+      .filter(b => String(b.start_time).startsWith(dateStr) && b.status !== 'cancelled')
       .sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime());
   };
 
@@ -496,7 +492,7 @@ export default function CalendarDetailPage() {
         user_id: user!.id, calendar_id: calId, name: keyName, key, is_active: true,
       });
       if (error) throw error;
-      setNewKey(key); setKeyName(''); setShowKey(true);
+      setNewKey(key); setKeyName(''); setShowKey(true); setKeyDialogOpen(false);
       loadData();
     } catch (err) {
       console.error('Failed to create API key:', err);
@@ -703,8 +699,17 @@ export default function CalendarDetailPage() {
 - 时区：${calendar.timezone}
 - 同时段总容量：${calendar.default_capacity}人
 
+## ⚠️ 重要：时区规则
+- 营业时间以日历时区 **${calendar.timezone}** 为准
+- 所有 API 中的时间（start_time / end_time）均为 **UTC ISO 8601 格式**
+- available_slots 返回的是 UTC 时间，例如 UTC 01:00 = ${calendar.timezone} 09:00
+- 创建预约时，start_time 可以：
+  - 直接使用 available_slots 中返回的 UTC 时间（推荐）
+  - 传入带时区偏移的格式，如 "2025-01-15T10:30:00+08:00"（系统会自动转换）
+- **不要**将本地时间当作 UTC 传入
+
 ## 营业时间
-| 星期 | 时间 |
+| 星期 | 时间（${calendar.timezone}） |
 |------|------|
 ${bhRows}
 
@@ -785,15 +790,26 @@ Authorization: Bearer <API_KEY>
 \`\`\`
 
 ## 重要注意事项
-1. **先查后约**：创建预约前必须先调用 availability 接口确认时间可用
-2. **失败处理**：预约失败时 API 会返回 fail_reason（service_full/calendar_full/duplicate）和 suggested_slots，请从建议时间中推荐给用户
-3. **防重复**：同一客户不能在同一时段重复预约同一服务
-4. **认证**：所有请求需要 Authorization: Bearer <API_KEY>
-5. **推荐流程**：问需求 → 列服务 → 查可用时间 → 创建预约`;
+1. **时区优先**：所有时间以日历时区 ${calendar.timezone} 为准，API 时间为 UTC 格式，请勿混淆
+2. **先查后约**：创建预约前必须先调用 availability 接口确认时间可用
+3. **失败处理**：预约失败时 API 会返回 fail_reason（service_full/calendar_full/duplicate/outside_business_hours）和 suggested_slots，请从建议时间中推荐给用户
+4. **防重复**：同一客户不能在同一时段重复预约同一服务
+5. **认证**：所有请求需要 Authorization: Bearer <API_KEY>
+6. **推荐流程**：问需求 → 列服务 → 查可用时间 → 创建预约`;
 
     setGeneratedSchema(JSON.stringify(schema, null, 2));
     setGeneratedPrompt(prompt);
     setGenerating(false);
+
+    // 记录生成时的配置摘要，用于后续变更检测
+    const configHash = JSON.stringify({
+      name: calendar.name,
+      timezone: calendar.timezone,
+      capacity: calendar.default_capacity,
+      hours: calendar.business_hours,
+      services: services.map(s => ({ id: s.id, name: s.name, duration: s.duration_minutes, capacity: s.capacity, active: s.is_active })),
+    });
+    setGeneratedConfigHash(configHash);
   }, [calendar, services, calId, apiBaseUrl]);
 
   const copyToClipboard = async (text: string, setter: (v: boolean) => void) => {
@@ -959,7 +975,7 @@ Authorization: Bearer <API_KEY>
                             <div key={b.id} className="flex items-center gap-2 p-2 rounded-md bg-muted/50 text-sm group">
                               <div className={`w-2 h-2 rounded-full shrink-0 ${SERVICE_COLORS[svcIdx % SERVICE_COLORS.length]}`} />
                               <div className="flex-1 min-w-0">
-                                <div className={`font-medium truncate ${b.status === 'cancelled' ? 'line-through text-muted-foreground' : ''}`}>
+                                <div className="font-medium truncate">
                                   {b.customer_name}
                                 </div>
                                 <div className="text-xs text-muted-foreground">
@@ -973,18 +989,14 @@ Authorization: Bearer <API_KEY>
                                   </div>
                                 )}
                               </div>
-                              {b.status === 'cancelled' ? (
-                                <Badge variant="destructive" className="text-[10px] shrink-0">已取消</Badge>
-                              ) : (
-                                <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEditBooking(b)} title="编辑">
-                                    <Pencil className="h-3 w-3" />
-                                  </Button>
-                                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setDeletingBooking(b); setDeleteConfirmOpen(true); }} title="取消预约">
-                                    <Trash2 className="h-3 w-3" />
-                                  </Button>
-                                </div>
-                              )}
+                              <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEditBooking(b)} title="编辑">
+                                  <Pencil className="h-3 w-3" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setDeletingBooking(b); setDeleteConfirmOpen(true); }} title="取消预约">
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
+                              </div>
                             </div>
                           );
                         })}
@@ -1074,7 +1086,7 @@ Authorization: Bearer <API_KEY>
                 <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                   <Search className="h-4 w-4" /> 筛选
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                   <div>
                     <Label className="text-xs">客户姓名</Label>
                     <Input placeholder="搜索姓名" value={filterName} onChange={e => setFilterName(e.target.value)} className="h-8 text-sm" />
@@ -1093,30 +1105,33 @@ Authorization: Bearer <API_KEY>
                       </SelectContent>
                     </Select>
                   </div>
+                  <div>
+                    <Label className="text-xs">预约状态</Label>
+                    <Select value={filterStatus} onValueChange={(v: string) => setFilterStatus(v as 'all' | 'active' | 'cancelled')}>
+                      <SelectTrigger className="h-8 text-sm"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">全部</SelectItem>
+                        <SelectItem value="active">有效</SelectItem>
+                        <SelectItem value="cancelled">已取消</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   <div className="flex items-end">
                     {hasFilters && (
                       <Button variant="ghost" size="sm" onClick={clearFilters} className="h-8 text-xs">
-                        <X className="h-3 w-3 mr-1" />清除筛选
+                        <X className="h-3 w-3 mr-1" />清除
                       </Button>
                     )}
                   </div>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="flex items-end gap-3">
                   <div>
-                    <Label className="text-xs">预约时间 起</Label>
-                    <Input type="date" value={filterStartTime} onChange={e => setFilterStartTime(e.target.value)} className="h-8 text-sm" />
-                  </div>
-                  <div>
-                    <Label className="text-xs">预约时间 止</Label>
-                    <Input type="date" value={filterEndTime} onChange={e => setFilterEndTime(e.target.value)} className="h-8 text-sm" />
-                  </div>
-                  <div>
-                    <Label className="text-xs">创建时间 起</Label>
-                    <Input type="date" value={filterCreatedStart} onChange={e => setFilterCreatedStart(e.target.value)} className="h-8 text-sm" />
-                  </div>
-                  <div>
-                    <Label className="text-xs">创建时间 止</Label>
-                    <Input type="date" value={filterCreatedEnd} onChange={e => setFilterCreatedEnd(e.target.value)} className="h-8 text-sm" />
+                    <Label className="text-xs">预约日期</Label>
+                    <div className="flex items-center gap-1">
+                      <Input type="date" value={filterDateRange.start} onChange={e => setFilterDateRange(r => ({ ...r, start: e.target.value }))} className="h-8 text-sm" />
+                      <span className="text-xs text-muted-foreground">~</span>
+                      <Input type="date" value={filterDateRange.end} onChange={e => setFilterDateRange(r => ({ ...r, end: e.target.value }))} className="h-8 text-sm" />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1198,6 +1213,33 @@ Authorization: Bearer <API_KEY>
                       <p className="text-sm text-muted-foreground mt-1">API 文档和 Agent Prompt 需要基于日历的服务数据来生成。请先到「服务管理」添加至少一个服务。</p>
                       <Button variant="outline" size="sm" className="mt-2" onClick={() => setActiveTab('services')}>
                         前往服务管理
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* 配置变更提示 */}
+            {generatedSchema && generatedConfigHash && (() => {
+              const currentHash = JSON.stringify({
+                name: calendar.name,
+                timezone: calendar.timezone,
+                capacity: calendar.default_capacity,
+                hours: calendar.business_hours,
+                services: services.map(s => ({ id: s.id, name: s.name, duration: s.duration_minutes, capacity: s.capacity, active: s.is_active })),
+              });
+              return currentHash !== generatedConfigHash;
+            })() && (
+              <Card className="border-amber-500/50 bg-amber-500/5">
+                <CardContent className="pt-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium">日历配置已更新</p>
+                      <p className="text-sm text-muted-foreground mt-1">营业时间、容量或服务信息发生了变化，当前生成的文档可能已过时。建议重新生成以确保 Agent 获取最新信息。</p>
+                      <Button variant="outline" size="sm" className="mt-2" onClick={generateSchemaAndPrompt} disabled={generating || hasNoServices}>
+                        <Sparkles className="h-3.5 w-3.5 mr-1" />重新生成
                       </Button>
                     </div>
                   </div>
