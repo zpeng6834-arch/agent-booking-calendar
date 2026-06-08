@@ -893,13 +893,7 @@ Content-Type: application/json
 }
 \`\`\`
 
-### 5. 查询预约
-\`\`\`
-GET ${apiBaseUrl}/api/bookings/<booking_id>?calendar_id=${calId}
-Authorization: Bearer <API_KEY>
-\`\`\`
-
-### 6. 改期预约
+### 5. 改期预约
 \`\`\`
 PATCH ${apiBaseUrl}/api/bookings/<booking_id>
 Authorization: Bearer <API_KEY>
@@ -911,7 +905,7 @@ Content-Type: application/json
 }
 \`\`\`
 
-### 7. 取消预约
+### 6. 取消预约
 \`\`\`
 DELETE ${apiBaseUrl}/api/bookings/<booking_id>?calendar_id=${calId}
 Authorization: Bearer <API_KEY>
