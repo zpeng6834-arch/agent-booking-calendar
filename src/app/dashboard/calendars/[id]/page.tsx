@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Copy, Check,
   Calendar, Settings, Key, FileText, Users, Clock, Search, X,
-  ArrowLeft, Loader2,
+  ArrowLeft, Loader2, Sparkles, AlertTriangle,
 } from 'lucide-react';
 
 // ===================== 类型 =====================
@@ -133,6 +133,9 @@ export default function CalendarDetailPage() {
   const { user } = useAuth();
   const calId = id as string;
 
+  // 受控 Tab
+  const [activeTab, setActiveTab] = useState('calendar');
+
   // 数据
   const [calendar, setCalendar] = useState<CalendarType | null>(null);
   const [services, setServices] = useState<Service[]>([]);
@@ -198,9 +201,19 @@ export default function CalendarDetailPage() {
   const [deletingBooking, setDeletingBooking] = useState<Booking | null>(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
 
-  // Schema/Prompt 复制
+  // Schema/Prompt
   const [schemaCopied, setSchemaCopied] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
+  const [generatedSchema, setGeneratedSchema] = useState<string | null>(null);
+  const [generatedPrompt, setGeneratedPrompt] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+
+  // 运行时 API 域名
+  const [apiBaseUrl, setApiBaseUrl] = useState('');
+
+  useEffect(() => {
+    setApiBaseUrl(window.location.origin);
+  }, []);
 
   // ===================== 数据加载 =====================
 
@@ -499,51 +512,120 @@ export default function CalendarDetailPage() {
   };
 
   const deleteApiKey = async (keyId: string) => {
+    if (!confirm('确定删除此 API 密钥？')) return;
     const supabase = getSupabaseBrowserClient();
     await supabase.from('api_keys').delete().eq('id', keyId);
     loadData();
   };
 
-  // ===================== 运行时 API 域名 =====================
+  // ===================== Schema/Prompt 生成 =====================
 
-  const [apiBaseUrl, setApiBaseUrl] = useState('');
+  const generateSchemaAndPrompt = useCallback(() => {
+    if (!calendar || !apiBaseUrl) return;
+    setGenerating(true);
 
-  useEffect(() => {
-    setApiBaseUrl(window.location.origin);
-  }, []);
+    const activeServices = services.filter(s => s.is_active);
 
-  // ===================== Schema/Prompt =====================
-
-  const openApiSchema = useMemo(() => {
-    if (!calendar || !apiBaseUrl) return '{}';
-    return JSON.stringify({
+    // 生成 OpenAPI Schema
+    const schema = {
       openapi: '3.1.0',
-      info: { title: `${calendar.name} - 预约 API`, version: '1.0.0' },
-      servers: [{ url: apiBaseUrl }],
+      info: {
+        title: `${calendar.name} - 预约 API`,
+        version: '1.0.0',
+        description: `${calendar.name}的预约系统 API，供 AI Agent 调用。支持查询日历信息、服务列表、可用时间、创建/查询/改期/取消预约。`,
+      },
+      servers: [{ url: apiBaseUrl, description: 'API 服务器' }],
+      security: [{ BearerAuth: [] }],
       paths: {
+        [`/api/calendars/${calId}`]: {
+          get: {
+            summary: '获取日历元数据',
+            description: '获取日历的营业时间、时区、容量等规则信息。Agent 应先调用此接口了解日历规则。',
+            responses: {
+              '200': {
+                description: '日历元数据',
+                content: { 'application/json': { schema: { type: 'object', properties: {
+                  success: { type: 'boolean' },
+                  data: { type: 'object', properties: {
+                    id: { type: 'string', description: '日历ID' },
+                    name: { type: 'string', description: '日历名称' },
+                    timezone: { type: 'string', description: '时区' },
+                    capacity_per_slot: { type: 'integer', description: '同时段总容量' },
+                    business_hours: { type: 'object', description: '营业时间' },
+                  }},
+                }}}}
+              },
+            },
+          },
+        },
+        [`/api/calendars/${calId}/services`]: {
+          get: {
+            summary: '获取服务列表',
+            description: '获取该日历下所有可预约的服务，包括服务名称、时长、容量等。Agent 必须先获取服务列表才能知道可预约什么。',
+            responses: {
+              '200': {
+                description: '服务列表',
+                content: { 'application/json': { schema: { type: 'object', properties: {
+                  success: { type: 'boolean' },
+                  data: { type: 'object', properties: {
+                    calendar_id: { type: 'string' },
+                    services: { type: 'array', items: { type: 'object', properties: {
+                      id: { type: 'string', description: '服务ID，创建预约时需要此ID' },
+                      name: { type: 'string', description: '服务名称' },
+                      description: { type: 'string' },
+                      duration_minutes: { type: 'integer', description: '服务时长（分钟）' },
+                      capacity_per_slot: { type: 'integer', description: '每时段可预约人数' },
+                      is_available: { type: 'boolean', description: '是否可预约' },
+                    }}},
+                  }},
+                }}}}
+              },
+            },
+          },
+        },
         '/api/availability': {
           get: {
             summary: '查询可预约时间',
+            description: '查询指定日历和服务的可用时间段。service_id 可选，不传则返回所有服务的时间。',
             parameters: [
-              { name: 'calendar_id', in: 'query', required: true, schema: { type: 'string' } },
-              { name: 'service_id', in: 'query', required: true, schema: { type: 'string' } },
-              { name: 'date', in: 'query', required: true, schema: { type: 'string', format: 'date' } },
-              { name: 'days', in: 'query', schema: { type: 'integer', default: 7 } },
+              { name: 'calendar_id', in: 'query', required: true, schema: { type: 'string', default: calId }, description: '日历ID' },
+              { name: 'service_id', in: 'query', required: false, schema: { type: 'string' }, description: '服务ID（可选，不传返回所有服务概览）' },
+              { name: 'date', in: 'query', schema: { type: 'string', format: 'date' }, description: '查询起始日期' },
+              { name: 'days', in: 'query', schema: { type: 'integer', default: 7 }, description: '查询天数' },
             ],
+            responses: {
+              '200': {
+                description: '可用时间列表',
+                content: { 'application/json': { schema: { type: 'object', properties: {
+                  success: { type: 'boolean' },
+                  data: { type: 'object', properties: {
+                    service: { type: 'object', description: '服务信息（指定service_id时返回）' },
+                    services: { type: 'array', description: '所有服务的可用时间（未指定service_id时返回）' },
+                    available_slots: { type: 'array', items: { type: 'object', properties: {
+                      start_time: { type: 'string', format: 'date-time' },
+                      end_time: { type: 'string', format: 'date-time' },
+                      remaining_service_capacity: { type: 'integer' },
+                      remaining_calendar_capacity: { type: 'integer' },
+                    }}},
+                  }},
+                }}}}
+              },
+            },
           },
         },
         '/api/bookings': {
           post: {
             summary: '创建预约',
+            description: '为客户创建预约。创建前应先调用 availability 接口确认时间可用。如果预约失败，响应中会包含 fail_reason 和 suggested_slots。',
             requestBody: {
               required: true,
               content: { 'application/json': { schema: {
                 type: 'object',
                 required: ['calendar_id', 'service_id', 'start_time', 'customer_name', 'customer_email'],
                 properties: {
-                  calendar_id: { type: 'string' },
-                  service_id: { type: 'string' },
-                  start_time: { type: 'string', format: 'date-time' },
+                  calendar_id: { type: 'string', default: calId },
+                  service_id: { type: 'string', description: '从服务列表获取' },
+                  start_time: { type: 'string', format: 'date-time', description: '从可用时间中选择' },
                   customer_name: { type: 'string' },
                   customer_email: { type: 'string', format: 'email' },
                   customer_phone: { type: 'string' },
@@ -551,55 +633,167 @@ export default function CalendarDetailPage() {
                 },
               } } },
             },
+            responses: {
+              '201': { description: '预约创建成功' },
+              '409': { description: '预约失败（容量已满/重复预约），返回 fail_reason + suggested_slots' },
+            },
+          },
+          get: {
+            summary: '查询预约列表',
+            description: '查询某日历下的预约记录，可按客户邮箱筛选',
+            parameters: [
+              { name: 'calendar_id', in: 'query', required: true, schema: { type: 'string' } },
+              { name: 'customer_email', in: 'query', schema: { type: 'string', description: '按客户邮箱筛选' },
+            }],
           },
         },
         '/api/bookings/{id}': {
-          get: { summary: '查询预约详情', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }] },
-          patch: { summary: '改期预约', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }] },
-          delete: { summary: '取消预约', parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }] },
+          get: {
+            summary: '查询预约详情',
+            parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+          },
+          patch: {
+            summary: '改期预约',
+            parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: {
+                type: 'object',
+                required: ['calendar_id', 'new_start_time'],
+                properties: {
+                  calendar_id: { type: 'string' },
+                  new_start_time: { type: 'string', format: 'date-time', description: '新的开始时间' },
+                },
+              } } },
+            },
+          },
+          delete: {
+            summary: '取消预约',
+            parameters: [
+              { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+              { name: 'calendar_id', in: 'query', required: true, schema: { type: 'string' } },
+            ],
+          },
         },
       },
-    }, null, 2);
-  }, [calendar, apiBaseUrl]);
+      components: {
+        securitySchemes: {
+          BearerAuth: { type: 'http', scheme: 'bearer', description: '使用 API Key 作为 Bearer Token' },
+        },
+      },
+    };
 
-  const agentPrompt = useMemo(() => {
-    if (!calendar || !apiBaseUrl) return '';
-    const svcList = services.filter(s => s.is_active).map(s =>
-      `- ${s.name}：${s.duration_minutes}分钟，每时段可预约${s.capacity}人，${s.description}`
+    // 生成 Agent Prompt
+    const svcList = activeServices.map(s =>
+      `| ${s.name} | ${s.id} | ${s.duration_minutes}分钟 | ${s.capacity}人 | ${s.description || '-'} |`
     ).join('\n');
-    return `你是「${calendar.name}」的预约助手。
+
+    // 格式化营业时间
+    const bhRows = DAYS.map(day => {
+      const cfg = calendar.business_hours?.[day];
+      if (!cfg?.enabled) return `| ${DAY_LABELS[day]} | 休息 |`;
+      return `| ${DAY_LABELS[day]} | ${cfg.slots.map(s => `${s.start}-${s.end}`).join(', ')} |`;
+    }).join('\n');
+
+    const prompt = `你是「${calendar.name}」的预约助手。请严格按照以下 API 文档帮助用户完成预约。
 
 ## 日历信息
 - 名称：${calendar.name}
+- 日历ID：${calId}
 - 时区：${calendar.timezone}
 - 同时段总容量：${calendar.default_capacity}人
-- 营业时间：每天可能有不同，请通过 API 查询
+
+## 营业时间
+| 星期 | 时间 |
+|------|------|
+${bhRows}
 
 ## 可预约服务
-${svcList || '暂无服务'}
+| 服务名称 | 服务ID | 时长 | 每时段容量 | 说明 |
+|---------|--------|------|-----------|------|
+${svcList || '| 暂无服务 | - | - | - | - |'}
 
-## 容量模型
+## 容量规则
 - 日历总容量：同一时段全店最多接待 ${calendar.default_capacity} 人
-- 服务容量：每个服务有自己的每时段可预约人数上限
-- 预约时两层约束同时生效，任一层满则不可预约
+- 服务容量：每个服务有自己的每时段可预约人数上限（见上表）
+- 两层约束同时生效，任一层满则不可预约
 
-## 可用 API（Base URL: ${apiBaseUrl}）
-1. GET ${apiBaseUrl}/api/availability?calendar_id=${calId}&service_id=xxx&date=YYYY-MM-DD&days=N
-   → 返回可预约时间段及剩余容量
-2. POST ${apiBaseUrl}/api/bookings
-   → 创建预约，body 含 calendar_id, service_id, start_time, customer_name, customer_email, customer_phone(可选), notes(可选)
-3. GET ${apiBaseUrl}/api/bookings/{id}
-   → 查询预约详情
-4. PATCH ${apiBaseUrl}/api/bookings/{id}
-   → 改期预约，body 含 start_time
-5. DELETE ${apiBaseUrl}/api/bookings/{id}
-   → 取消预约
+## API 调用流程
 
-## 注意事项
-- 创建预约前先查询可用时间
-- 预约失败时 API 会返回推荐可选时间
-- 同一客户不能在同一时段重复预约同一服务
-- 使用 Authorization: Bearer <API_KEY> 认证`;
+### 1. 获取日历元数据
+\`\`\`
+GET ${apiBaseUrl}/api/calendars/${calId}
+Authorization: Bearer <API_KEY>
+\`\`\`
+
+### 2. 获取服务列表（必须先调用）
+\`\`\`
+GET ${apiBaseUrl}/api/calendars/${calId}/services
+Authorization: Bearer <API_KEY>
+\`\`\`
+
+### 3. 查询可用时间
+\`\`\`
+# 查询某个服务的可用时间
+GET ${apiBaseUrl}/api/availability?calendar_id=${calId}&service_id=<服务ID>&date=YYYY-MM-DD&days=7
+Authorization: Bearer <API_KEY>
+
+# 查询所有服务的可用时间概览
+GET ${apiBaseUrl}/api/availability?calendar_id=${calId}&date=YYYY-MM-DD&days=7
+Authorization: Bearer <API_KEY>
+\`\`\`
+
+### 4. 创建预约
+\`\`\`
+POST ${apiBaseUrl}/api/bookings
+Authorization: Bearer <API_KEY>
+Content-Type: application/json
+
+{
+  "calendar_id": "${calId}",
+  "service_id": "<从服务列表获取>",
+  "start_time": "<从可用时间中选择>",
+  "customer_name": "客户姓名",
+  "customer_email": "客户邮箱",
+  "customer_phone": "可选",
+  "notes": "可选备注"
+}
+\`\`\`
+
+### 5. 查询预约
+\`\`\`
+GET ${apiBaseUrl}/api/bookings/<booking_id>?calendar_id=${calId}
+Authorization: Bearer <API_KEY>
+\`\`\`
+
+### 6. 改期预约
+\`\`\`
+PATCH ${apiBaseUrl}/api/bookings/<booking_id>
+Authorization: Bearer <API_KEY>
+Content-Type: application/json
+
+{
+  "calendar_id": "${calId}",
+  "new_start_time": "<新的开始时间>"
+}
+\`\`\`
+
+### 7. 取消预约
+\`\`\`
+DELETE ${apiBaseUrl}/api/bookings/<booking_id>?calendar_id=${calId}
+Authorization: Bearer <API_KEY>
+\`\`\`
+
+## 重要注意事项
+1. **先查后约**：创建预约前必须先调用 availability 接口确认时间可用
+2. **失败处理**：预约失败时 API 会返回 fail_reason（service_full/calendar_full/duplicate）和 suggested_slots，请从建议时间中推荐给用户
+3. **防重复**：同一客户不能在同一时段重复预约同一服务
+4. **认证**：所有请求需要 Authorization: Bearer <API_KEY>
+5. **推荐流程**：问需求 → 列服务 → 查可用时间 → 创建预约`;
+
+    setGeneratedSchema(JSON.stringify(schema, null, 2));
+    setGeneratedPrompt(prompt);
+    setGenerating(false);
   }, [calendar, services, calId, apiBaseUrl]);
 
   const copyToClipboard = async (text: string, setter: (v: boolean) => void) => {
@@ -618,6 +812,9 @@ ${svcList || '暂无服务'}
     return <div className="flex items-center justify-center h-64 text-muted-foreground">日历不存在</div>;
   }
 
+  const activeServices = services.filter(s => s.is_active);
+  const hasNoServices = activeServices.length === 0;
+
   return (
     <div className="space-y-6">
       {/* 顶部面包屑 */}
@@ -628,7 +825,7 @@ ${svcList || '暂无服务'}
         <div>
           <h1 className="text-2xl font-bold">{calendar.name}</h1>
           <p className="text-muted-foreground text-sm">
-            {calendar.timezone} &middot; 总容量 {calendar.default_capacity} &middot; {services.filter(s => s.is_active).length} 个服务
+            {calendar.timezone} &middot; 总容量 {calendar.default_capacity} &middot; {activeServices.length} 个服务
           </p>
         </div>
         <div className="flex-1" />
@@ -637,8 +834,8 @@ ${svcList || '暂无服务'}
         </Button>
       </div>
 
-      {/* Tab 布局 */}
-      <Tabs defaultValue="calendar" className="space-y-4">
+      {/* 受控 Tab 布局 */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="calendar"><Calendar className="h-4 w-4 mr-1" />日历视图</TabsTrigger>
           <TabsTrigger value="services"><Users className="h-4 w-4 mr-1" />服务管理</TabsTrigger>
@@ -721,7 +918,7 @@ ${svcList || '暂无服务'}
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">
-                    {services.filter(s => s.is_active).map((s, i) => (
+                    {activeServices.map((s, i) => (
                       <div key={s.id} className="flex items-center gap-2 text-sm">
                         <div className={`w-2.5 h-2.5 rounded-sm ${SERVICE_COLORS[i % SERVICE_COLORS.length]}`} />
                         <span className="flex-1">{s.name}</span>
@@ -989,14 +1186,32 @@ ${svcList || '暂无服务'}
               加载中...
             </div>
           ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="space-y-6">
+            {/* 生成提示 */}
+            {hasNoServices && (
+              <Card className="border-amber-500/50 bg-amber-500/5">
+                <CardContent className="pt-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium">请先创建服务</p>
+                      <p className="text-sm text-muted-foreground mt-1">API 文档和 Agent Prompt 需要基于日历的服务数据来生成。请先到「服务管理」添加至少一个服务。</p>
+                      <Button variant="outline" size="sm" className="mt-2" onClick={() => setActiveTab('services')}>
+                        前往服务管理
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             {/* API Keys */}
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div>
                     <CardTitle>API 密钥</CardTitle>
-                    <CardDescription>用于 AI Agent 调用预约 API</CardDescription>
+                    <CardDescription>用于 AI Agent 调用预约 API 的身份凭证</CardDescription>
                   </div>
                   <Button size="sm" onClick={() => { setKeyDialogOpen(true); setNewKey(null); setShowKey(false); }}>
                     <Plus className="h-3.5 w-3.5 mr-1" />创建
@@ -1017,7 +1232,7 @@ ${svcList || '暂无服务'}
                   </div>
                 )}
                 {apiKeys.length === 0 ? (
-                  <p className="text-muted-foreground text-center py-4 text-sm">暂无密钥</p>
+                  <p className="text-muted-foreground text-center py-4 text-sm">暂无密钥，创建后 Agent 即可通过 API Key 调用接口</p>
                 ) : (
                   <div className="space-y-2">
                     {apiKeys.map(k => (
@@ -1044,38 +1259,70 @@ ${svcList || '暂无服务'}
               </CardContent>
             </Card>
 
-            {/* Schema & Prompt */}
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-base">OpenAPI Schema</CardTitle>
-                    <Button size="sm" variant="outline" onClick={() => copyToClipboard(openApiSchema, setSchemaCopied)}>
-                      {schemaCopied ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
-                      复制
-                    </Button>
+            {/* 生成按钮 */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>API 文档与 Agent Prompt</CardTitle>
+                    <CardDescription>
+                      基于当前日历和服务数据，生成供 AI Agent 使用的 OpenAPI Schema 和 Prompt
+                    </CardDescription>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <pre className="text-xs bg-muted/50 p-3 rounded-md overflow-auto max-h-[250px] whitespace-pre-wrap">{openApiSchema}</pre>
-                </CardContent>
-              </Card>
+                  <Button
+                    onClick={generateSchemaAndPrompt}
+                    disabled={generating || hasNoServices}
+                  >
+                    {generating ? (
+                      <><Loader2 className="h-4 w-4 mr-1 animate-spin" />生成中...</>
+                    ) : (
+                      <><Sparkles className="h-4 w-4 mr-1" />生成文档</>
+                    )}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {!generatedSchema && !generatedPrompt ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <FileText className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                    <p>点击「生成文档」按钮，基于当前日历和服务数据生成 API 文档</p>
+                    <p className="text-xs mt-1">生成后可复制 OpenAPI Schema 或 Agent Prompt 供 Agent 使用</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center justify-between">
+                          <CardTitle className="text-base">OpenAPI Schema</CardTitle>
+                          <Button size="sm" variant="outline" onClick={() => copyToClipboard(generatedSchema || '', setSchemaCopied)}>
+                            {schemaCopied ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
+                            复制
+                          </Button>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <pre className="text-xs bg-muted/50 p-3 rounded-md overflow-auto max-h-[400px] whitespace-pre-wrap">{generatedSchema}</pre>
+                      </CardContent>
+                    </Card>
 
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-base">Agent Prompt</CardTitle>
-                    <Button size="sm" variant="outline" onClick={() => copyToClipboard(agentPrompt, setPromptCopied)}>
-                      {promptCopied ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
-                      复制
-                    </Button>
+                    <Card>
+                      <CardHeader className="pb-3">
+                        <div className="flex items-center justify-between">
+                          <CardTitle className="text-base">Agent Prompt</CardTitle>
+                          <Button size="sm" variant="outline" onClick={() => copyToClipboard(generatedPrompt || '', setPromptCopied)}>
+                            {promptCopied ? <Check className="h-3 w-3 mr-1" /> : <Copy className="h-3 w-3 mr-1" />}
+                            复制
+                          </Button>
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <pre className="text-xs bg-muted/50 p-3 rounded-md overflow-auto max-h-[400px] whitespace-pre-wrap">{generatedPrompt}</pre>
+                      </CardContent>
+                    </Card>
                   </div>
-                </CardHeader>
-                <CardContent>
-                  <pre className="text-xs bg-muted/50 p-3 rounded-md overflow-auto max-h-[250px] whitespace-pre-wrap">{agentPrompt}</pre>
-                </CardContent>
-              </Card>
-            </div>
+                )}
+              </CardContent>
+            </Card>
           </div>
           )}
         </TabsContent>
