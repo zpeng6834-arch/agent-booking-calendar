@@ -199,17 +199,29 @@ export default function CalendarDetailPage() {
   const [deletingBooking, setDeletingBooking] = useState<Booking | null>(null);
   const [deleteSaving, setDeleteSaving] = useState(false);
 
-  // Schema/Prompt
+  // Schema/Prompt — 从 localStorage 恢复，刷新/切换不丢失
   const [schemaCopied, setSchemaCopied] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
   const [generatedSchema, setGeneratedSchema] = useState<string | null>(null);
   const [generatedPrompt, setGeneratedPrompt] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
-  // 配置变更追踪：记录生成时的日历/服务数据摘要
   const [generatedConfigHash, setGeneratedConfigHash] = useState<string | null>(null);
 
   // 运行时 API 域名
   const [apiBaseUrl, setApiBaseUrl] = useState('');
+
+  // 挂载时从 localStorage 恢复已生成的文档
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(`booking-docs-${calId}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.schema) setGeneratedSchema(parsed.schema);
+        if (parsed.prompt) setGeneratedPrompt(parsed.prompt);
+        if (parsed.configHash) setGeneratedConfigHash(parsed.configHash);
+      }
+    } catch { /* ignore */ }
+  }, [calId]);
 
   useEffect(() => {
     setApiBaseUrl(window.location.origin);
@@ -797,7 +809,8 @@ Authorization: Bearer <API_KEY>
 5. **认证**：所有请求需要 Authorization: Bearer <API_KEY>
 6. **推荐流程**：问需求 → 列服务 → 查可用时间 → 创建预约`;
 
-    setGeneratedSchema(JSON.stringify(schema, null, 2));
+    const schemaStr = JSON.stringify(schema, null, 2);
+    setGeneratedSchema(schemaStr);
     setGeneratedPrompt(prompt);
     setGenerating(false);
 
@@ -809,6 +822,15 @@ Authorization: Bearer <API_KEY>
       services: services.filter(s => s.is_active).map(s => ({ name: s.name, duration: s.duration_minutes, capacity: s.capacity })),
     });
     setGeneratedConfigHash(configHash);
+
+    // 持久化到 localStorage，刷新/切换不丢失
+    try {
+      localStorage.setItem(`booking-docs-${calId}`, JSON.stringify({
+        schema: schemaStr,
+        prompt,
+        configHash,
+      }));
+    } catch { /* ignore */ }
   }, [calendar, services, calId, apiBaseUrl]);
 
   const copyToClipboard = async (text: string, setter: (v: boolean) => void) => {
