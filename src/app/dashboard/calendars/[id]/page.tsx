@@ -504,6 +504,14 @@ export default function CalendarDetailPage() {
     loadData();
   };
 
+  // ===================== 运行时 API 域名 =====================
+
+  const [apiBaseUrl, setApiBaseUrl] = useState('');
+
+  useEffect(() => {
+    setApiBaseUrl(window.location.origin);
+  }, []);
+
   // ===================== Schema/Prompt =====================
 
   const openApiSchema = useMemo(() => {
@@ -511,7 +519,7 @@ export default function CalendarDetailPage() {
     return JSON.stringify({
       openapi: '3.1.0',
       info: { title: `${calendar.name} - 预约 API`, version: '1.0.0' },
-      servers: [{ url: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:5000' }],
+      servers: [{ url: apiBaseUrl }],
       paths: {
         '/api/availability': {
           get: {
@@ -552,13 +560,7 @@ export default function CalendarDetailPage() {
         },
       },
     }, null, 2);
-  }, [calendar]);
-
-  const [apiBaseUrl, setApiBaseUrl] = useState('');
-
-  useEffect(() => {
-    setApiBaseUrl(window.location.origin);
-  }, []);
+  }, [calendar, apiBaseUrl]);
 
   const agentPrompt = useMemo(() => {
     if (!calendar || !apiBaseUrl) return '';
