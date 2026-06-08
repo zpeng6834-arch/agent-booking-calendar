@@ -18,7 +18,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Copy, Check,
   Calendar, Settings, Key, FileText, Users, Clock, Search, X,
-  ArrowLeft,
+  ArrowLeft, Loader2,
 } from 'lucide-react';
 
 // ===================== 类型 =====================
@@ -507,7 +507,7 @@ export default function CalendarDetailPage() {
   // ===================== Schema/Prompt =====================
 
   const openApiSchema = useMemo(() => {
-    if (!calendar) return '{}';
+    if (!calendar || !apiBaseUrl) return '{}';
     return JSON.stringify({
       openapi: '3.1.0',
       info: { title: `${calendar.name} - 预约 API`, version: '1.0.0' },
@@ -554,10 +554,14 @@ export default function CalendarDetailPage() {
     }, null, 2);
   }, [calendar]);
 
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:5000';
+  const [apiBaseUrl, setApiBaseUrl] = useState('');
+
+  useEffect(() => {
+    setApiBaseUrl(window.location.origin);
+  }, []);
 
   const agentPrompt = useMemo(() => {
-    if (!calendar) return '';
+    if (!calendar || !apiBaseUrl) return '';
     const svcList = services.filter(s => s.is_active).map(s =>
       `- ${s.name}：${s.duration_minutes}分钟，每时段可预约${s.capacity}人，${s.description}`
     ).join('\n');
@@ -977,6 +981,12 @@ ${svcList || '暂无服务'}
 
         {/* ========== API 集成 ========== */}
         <TabsContent value="api">
+          {!apiBaseUrl ? (
+            <div className="flex items-center justify-center py-12 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" />
+              加载中...
+            </div>
+          ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* API Keys */}
             <Card>
@@ -1065,6 +1075,7 @@ ${svcList || '暂无服务'}
               </Card>
             </div>
           </div>
+          )}
         </TabsContent>
       </Tabs>
 
