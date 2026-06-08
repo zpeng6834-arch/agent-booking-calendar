@@ -13,6 +13,11 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  env: {
+    NEXT_PUBLIC_API_BASE_URL: process.env.COZE_PROJECT_DOMAIN_DEFAULT
+      ? `https://${process.env.COZE_PROJECT_DOMAIN_DEFAULT}`
+      : 'http://localhost:5000',
+  },
 };
 
 export default nextConfig;

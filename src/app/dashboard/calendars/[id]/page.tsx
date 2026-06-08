@@ -511,7 +511,7 @@ export default function CalendarDetailPage() {
     return JSON.stringify({
       openapi: '3.1.0',
       info: { title: `${calendar.name} - 预约 API`, version: '1.0.0' },
-      servers: [{ url: process.env.NEXT_PUBLIC_API_URL || 'https://api.example.com' }],
+      servers: [{ url: process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:5000' }],
       paths: {
         '/api/availability': {
           get: {
@@ -554,6 +554,8 @@ export default function CalendarDetailPage() {
     }, null, 2);
   }, [calendar]);
 
+  const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:5000';
+
   const agentPrompt = useMemo(() => {
     if (!calendar) return '';
     const svcList = services.filter(s => s.is_active).map(s =>
@@ -575,16 +577,16 @@ ${svcList || '暂无服务'}
 - 服务容量：每个服务有自己的每时段可预约人数上限
 - 预约时两层约束同时生效，任一层满则不可预约
 
-## 可用 API
-1. GET /api/availability?calendar_id=${calId}&service_id=xxx&date=YYYY-MM-DD&days=N
+## 可用 API（Base URL: ${apiBaseUrl}）
+1. GET ${apiBaseUrl}/api/availability?calendar_id=${calId}&service_id=xxx&date=YYYY-MM-DD&days=N
    → 返回可预约时间段及剩余容量
-2. POST /api/bookings
+2. POST ${apiBaseUrl}/api/bookings
    → 创建预约，body 含 calendar_id, service_id, start_time, customer_name, customer_email, customer_phone(可选), notes(可选)
-3. GET /api/bookings/{id}
+3. GET ${apiBaseUrl}/api/bookings/{id}
    → 查询预约详情
-4. PATCH /api/bookings/{id}
+4. PATCH ${apiBaseUrl}/api/bookings/{id}
    → 改期预约，body 含 start_time
-5. DELETE /api/bookings/{id}
+5. DELETE ${apiBaseUrl}/api/bookings/{id}
    → 取消预约
 
 ## 注意事项
@@ -592,7 +594,7 @@ ${svcList || '暂无服务'}
 - 预约失败时 API 会返回推荐可选时间
 - 同一客户不能在同一时段重复预约同一服务
 - 使用 Authorization: Bearer <API_KEY> 认证`;
-  }, [calendar, services, calId]);
+  }, [calendar, services, calId, apiBaseUrl]);
 
   const copyToClipboard = async (text: string, setter: (v: boolean) => void) => {
     await navigator.clipboard.writeText(text);
