@@ -22,7 +22,6 @@ export interface BookingResult {
   error?: string;
   /** 预约失败原因类型 */
   failReason?: 'service_full' | 'calendar_full' | 'duplicate' | 'outside_business_hours' | 'other';
-  suggestedSlots?: TimeSlot[];
 }
 
 // ===================== 时区工具函数 =====================
@@ -357,13 +356,10 @@ export async function createBooking(
   ).length;
 
   if (serviceBookedCount >= service.capacity) {
-    // 服务已满，返回推荐时间
-    const suggested = await getSuggestedSlots(calendar, service, start);
     return {
       success: false,
       error: `该服务此时段已约满（${serviceBookedCount}/${service.capacity}），请选择其他时间`,
       failReason: 'service_full',
-      suggestedSlots: suggested,
     };
   }
 
@@ -371,13 +367,10 @@ export async function createBooking(
   const calendarBookedCount = (allOverlapping || []).length;
 
   if (calendarBookedCount >= calendar.default_capacity) {
-    // 日历总容量已满，返回推荐时间
-    const suggested = await getSuggestedSlots(calendar, service, start);
     return {
       success: false,
       error: `该时段全店预约已满（${calendarBookedCount}/${calendar.default_capacity}），请选择其他时间`,
       failReason: 'calendar_full',
-      suggestedSlots: suggested,
     };
   }
 
@@ -568,22 +561,4 @@ export async function rescheduleBooking(
 /**
  * 获取推荐可选时间槽
  */
-async function getSuggestedSlots(
-  calendar: Calendar,
-  service: Service,
-  afterTime: Date
-): Promise<TimeSlot[]> {
-  const suggestedStart = new Date(afterTime);
-  suggestedStart.setHours(suggestedStart.getHours() + 1);
-  const suggestedEnd = new Date(suggestedStart);
-  suggestedEnd.setDate(suggestedEnd.getDate() + 7);
 
-  const { slots } = await getAvailableSlots(
-    calendar,
-    service,
-    suggestedStart,
-    suggestedEnd
-  );
-
-  return slots.filter(s => s.available).slice(0, 5);
-}

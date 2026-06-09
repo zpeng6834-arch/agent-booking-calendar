@@ -616,7 +616,7 @@ export default function CalendarDetailPage() {
         '/api/bookings': {
           post: {
             summary: '创建预约',
-            description: '为客户创建预约。创建前应先调用 availability 接口确认时间可用。如果预约失败，响应中会包含 fail_reason 和 suggested_slots。',
+            description: '为客户创建预约。如果预约失败，响应中会包含 fail_reason 和 hint，请告知用户并等待用户追问可用时间，不要自动重试。',
             operationId: 'createBooking',
             requestBody: {
               required: true,
@@ -628,7 +628,7 @@ export default function CalendarDetailPage() {
                 content: { 'application/json': { schema: { '$ref': '#/components/schemas/BookingResponse' } } },
               },
               '409': {
-                description: '预约失败（容量已满/重复预约），返回 fail_reason + suggested_slots',
+                description: '预约失败（容量已满/重复预约），返回 fail_reason + hint',
                 content: { 'application/json': { schema: { '$ref': '#/components/schemas/BookingFailResponse' } } },
               },
             },
@@ -682,7 +682,7 @@ export default function CalendarDetailPage() {
                 content: { 'application/json': { schema: { type: 'object', properties: {
                   success: { type: 'boolean' },
                   message: { type: 'string' },
-                  agent_hint: { type: 'string', description: '给 Agent 的后续操作建议' },
+                  hint: { type: 'string', description: '后续操作建议' },
                 } } } },
               },
             },
@@ -831,8 +831,7 @@ export default function CalendarDetailPage() {
               success: { type: 'boolean' },
               error: { type: 'string' },
               fail_reason: { type: 'string', enum: ['service_full', 'calendar_full', 'duplicate', 'outside_business_hours'], description: '失败原因' },
-              suggested_slots: { type: 'array', items: { '$ref': '#/components/schemas/AvailableSlot' }, description: '推荐的可用时间' },
-              agent_hint: { type: 'string', description: '给 Agent 的处理建议' },
+              hint: { type: 'string', description: '失败提示，告知用户后等待其追问可用时间' },
             },
           },
           RescheduleRequest: {
@@ -879,8 +878,7 @@ export default function CalendarDetailPage() {
               parsed_time: { type: 'string', description: '解析后的具体时间(ISO 8601)' },
               booking: { '$ref': '#/components/schemas/BookingData', description: '预约信息（成功时返回）' },
               fail_reason: { type: 'string', enum: ['service_not_found', 'no_available_slot', 'service_full', 'calendar_full', 'time_parsing_failed'], description: '失败原因' },
-              suggested_slots: { type: 'array', items: { '$ref': '#/components/schemas/AvailableSlot' }, description: '推荐的可用时间' },
-              agent_hint: { type: 'string', description: '给 Agent 的下一步操作建议' },
+              hint: { type: 'string', description: '失败提示，告知用户后等待其追问可用时间' },
             },
           },
         },
@@ -947,7 +945,7 @@ POST ${apiBaseUrl}/api/quick-book
 - service_name 支持模糊匹配（如"按摩"匹配"全身按摩服务"）
 - time_preference 支持："明天下午"、"下周一上午"、"2025-01-20 14:00" 等
 - customer_info 所有字段可选，name 缺省为"匿名客户"，支持任意自定义字段
-- 失败时返回 fail_reason + suggested_slots，从中推荐给用户${activeServices.length > 0 ? `\n- 示例：预约"${activeServices[0].name}"（ID: ${activeServices[0].id}）` : ''}
+- 失败时返回 fail_reason 和 hint，**不要自动重试**${activeServices.length > 0 ? `\n- 示例：预约"${activeServices[0].name}"（ID: ${activeServices[0].id}）` : ''}
 
 ### 查询可用时间
 \`\`\`
@@ -971,10 +969,14 @@ DELETE ${apiBaseUrl}/api/bookings/<booking_id>?calendar_id=${calId}
 - 服务列表：GET ${apiBaseUrl}/api/calendars/${calId}/services
 
 ## 预约流程建议
-1. 用户表达预约意图 → 收集服务名称和时间偏好
+1. 用户表达预约意图 → 确认服务名称和时间偏好
 2. 调用 quick-book 创建预约
 3. 成功 → 告知用户预约详情
-4. 失败 → 从 suggested_slots 中推荐替代时间`;
+4. 失败 → 告知用户原因（如"该时段已满"），**等待用户追问**可用时间
+5. 用户追问 → 调用 availability 查询，展示可选时段让用户选择
+6. 用户选定 → 再次调用 quick-book
+
+**禁止行为：预约失败后自动重试其他时间段，必须由用户主动询问**`;
 
     const schemaStr = JSON.stringify(schema, null, 2);
     setGeneratedSchema(schemaStr);

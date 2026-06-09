@@ -17,19 +17,19 @@ export async function POST(request: NextRequest) {
     // 参数校验
     if (!calendar_id) {
       return NextResponse.json(
-        { success: false, error: '缺少 calendar_id', agent_hint: '请提供日历ID' },
+        { success: false, error: '缺少 calendar_id', hint: '请提供日历ID' },
         { status: 400 }
       );
     }
     if (!service) {
       return NextResponse.json(
-        { success: false, error: '缺少 service', agent_hint: '请提供服务名称或ID' },
+        { success: false, error: '缺少 service', hint: '请提供服务名称或ID' },
         { status: 400 }
       );
     }
     if (!time_preference) {
       return NextResponse.json(
-        { success: false, error: '缺少 time_preference', agent_hint: '请提供时间偏好，如"明天下午"、"下周一上午"' },
+        { success: false, error: '缺少 time_preference', hint: '请提供时间偏好，如"明天下午"、"下周一上午"' },
         { status: 400 }
       );
     }
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
 
     if (!services || services.length === 0) {
       return NextResponse.json(
-        { success: false, error: '该日历下没有可用服务', agent_hint: '请先在日历中创建服务' },
+        { success: false, error: '该日历下没有可用服务', hint: '请先在日历中创建服务' },
         { status: 404 }
       );
     }
@@ -91,7 +91,7 @@ export async function POST(request: NextRequest) {
           success: false,
           error: `未找到匹配的服务: ${service}`,
           available_services: services.map((s: Service) => ({ id: s.id, name: s.name })),
-          agent_hint: `请使用正确的服务名称，可选服务: ${services.map((s: Service) => s.name).join(', ')}`,
+          hint: `请使用正确的服务名称，可选服务: ${services.map((s: Service) => s.name).join(', ')}`,
         },
         { status: 404 }
       );
@@ -131,18 +131,11 @@ export async function POST(request: NextRequest) {
               requested_preference: time_preference,
               reason: '未来7天内无可用时段',
             },
-            agent_hint: '建议告知客户当前无可用时段，或稍后重试',
+            hint: '建议告知客户当前无可用时段，或稍后重试',
           },
           { status: 409 }
         );
       }
-
-      // 返回替代时间
-      const alternatives = extendedResult.slots.slice(0, 5).map((slot) => ({
-        time: slot.start,
-        end: slot.end,
-        available: true,
-      }));
 
       return NextResponse.json(
         {
@@ -151,10 +144,9 @@ export async function POST(request: NextRequest) {
           details: {
             service_name: matchedService.name,
             requested_preference: time_preference,
-            reason: `${time_preference} 已约满`,
+            reason: '该时段已约满或不在营业时间内',
           },
-          alternatives,
-          agent_hint: `建议向客户推荐以下替代时间: ${alternatives.map((a) => a.time).join(', ')}`,
+          hint: '请告知客户该时段不可用，询问是否需要查看其他可预约时间',
         },
         { status: 409 }
       );
@@ -211,8 +203,7 @@ export async function POST(request: NextRequest) {
               time: selectedSlot.start,
               service: matchedService.name,
             },
-            agent_hint: '该客户在此时段已有预约，建议选择其他时间',
-            alternatives: filteredSlots.slice(1, 4).map((s) => ({ time: s.start, end: s.end })),
+            hint: '该客户在此时段已有预约，请询问客户是否需要查看其他可预约时间',
           },
           { status: 409 }
         );
@@ -223,7 +214,7 @@ export async function POST(request: NextRequest) {
           success: false,
           error: `创建预约失败: ${bookingResult.error}`,
           details: bookingResult,
-          agent_hint: '请稍后重试或联系客服',
+          hint: '请稍后重试，或询问客户是否需要查看其他可预约时间',
         },
         { status: 500 }
       );

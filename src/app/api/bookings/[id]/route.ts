@@ -199,10 +199,10 @@ export async function PATCH(
       let agentHint = '';
       switch (result.failReason) {
         case 'service_full':
-          agentHint = '新时段该服务已约满，请从 suggested_slots 中推荐其他时间';
+          agentHint = '新时段该服务已约满，请告知用户并等待用户询问其他可用时间';
           break;
         case 'calendar_full':
-          agentHint = '新时段全店预约已满，请从 suggested_slots 中推荐其他时间';
+          agentHint = '新时段全店预约已满，请告知用户并等待用户询问其他可用时间';
           break;
         default:
           agentHint = '请检查参数后重试';
@@ -213,13 +213,7 @@ export async function PATCH(
           success: false,
           error: result.error,
           fail_reason: result.failReason,
-          agent_hint: agentHint,
-          suggested_slots: result.suggestedSlots?.map(s => ({
-            start_time: s.start,
-            end_time: s.end,
-            remaining_service_capacity: s.remainingServiceCapacity,
-            remaining_calendar_capacity: s.remainingCalendarCapacity,
-          })),
+          hint: agentHint,
         },
         { status: statusCode }
       );
