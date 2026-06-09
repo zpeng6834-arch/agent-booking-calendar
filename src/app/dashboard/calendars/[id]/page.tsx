@@ -906,7 +906,6 @@ export default function CalendarDetailPage() {
 ## 基本信息
 - 日历：${calendar.name}（ID: ${calId}）
 - 时区：**${calendar.timezone}**（所有营业时间以此时区为准）
-- API 认证：所有请求 Header 携带 \`Authorization: Bearer <API_KEY>\`
 
 ## 营业时间（${calendar.timezone}）
 | 星期 | 时间 |
@@ -948,14 +947,13 @@ POST ${apiBaseUrl}/api/quick-book
 - service_name 支持模糊匹配（如"按摩"匹配"全身按摩服务"）
 - time_preference 支持："明天下午"、"下周一上午"、"2025-01-20 14:00" 等
 - customer_info 所有字段可选，name 缺省为"匿名客户"，支持任意自定义字段
-- 失败时返回 fail_reason + suggested_slots，从中推荐给用户
+- 失败时返回 fail_reason + suggested_slots，从中推荐给用户${activeServices.length > 0 ? `\n- 示例：预约"${activeServices[0].name}"（ID: ${activeServices[0].id}）` : ''}
 
 ### 查询可用时间
 \`\`\`
-GET ${apiBaseUrl}/api/availability?calendar_id=${calId}&service_id=<ID>&date=YYYY-MM-DD&days=7
 GET ${apiBaseUrl}/api/availability?calendar_id=${calId}&date=YYYY-MM-DD&days=7
 \`\`\`
-不传 service_id 返回所有服务概览。
+不传 service_id 返回所有服务概览；传 service_id 可查特定服务。${activeServices.length > 0 ? `如查"${activeServices[0].name}"：service_id=${activeServices[0].id}` : ''}
 
 ### 改期预约
 \`\`\`
