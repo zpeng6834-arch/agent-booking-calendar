@@ -244,7 +244,7 @@ export async function createBooking(
   serviceId: string,
   startTime: string,
   customerName: string,
-  customerEmail: string,
+  customerEmail?: string,
   customerPhone?: string,
   notes?: string
 ): Promise<BookingResult> {
@@ -311,23 +311,29 @@ export async function createBooking(
   }
 
   // ===== 重复预约校验 =====
-  const { data: duplicateBooking } = await client
-    .from('bookings')
-    .select('id')
-    .eq('calendar_id', calendarId)
-    .eq('service_id', serviceId)
-    .eq('customer_email', customerEmail)
-    .in('status', ['pending', 'confirmed'])
-    .lt('start_time', end.toISOString())
-    .gt('end_time', start.toISOString())
-    .maybeSingle();
+  // 优先用 email 去重，无 email 用 phone，都无则跳过去重
+  const dedupField = customerEmail ? 'customer_email' : (customerPhone ? 'customer_phone' : null);
+  const dedupValue = customerEmail || customerPhone;
 
-  if (duplicateBooking) {
-    return {
-      success: false,
-      error: `${customerName} 已在该时段预约了 ${service.name}，请勿重复预约`,
-      failReason: 'duplicate',
-    };
+  if (dedupField && dedupValue) {
+    const { data: duplicateBooking } = await client
+      .from('bookings')
+      .select('id')
+      .eq('calendar_id', calendarId)
+      .eq('service_id', serviceId)
+      .eq(dedupField, dedupValue)
+      .in('status', ['pending', 'confirmed'])
+      .lt('start_time', end.toISOString())
+      .gt('end_time', start.toISOString())
+      .maybeSingle();
+
+    if (duplicateBooking) {
+      return {
+        success: false,
+        error: `${customerName} 已在该时段预约了 ${service.name}，请勿重复预约`,
+        failReason: 'duplicate',
+      };
+    }
   }
 
   // ===== 双层容量校验 =====
@@ -384,7 +390,7 @@ export async function createBooking(
       start_time: start.toISOString(),
       end_time: end.toISOString(),
       customer_name: customerName,
-      customer_email: customerEmail,
+      customer_email: customerEmail || null,
       customer_phone: customerPhone || null,
       notes: notes || null,
       status: 'confirmed',

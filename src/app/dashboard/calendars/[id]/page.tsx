@@ -175,8 +175,7 @@ export default function CalendarDetailPage() {
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
   // 预约筛选
-  const [filterName, setFilterName] = useState('');
-  const [filterContact, setFilterContact] = useState('');
+  const [filterKeyword, setFilterKeyword] = useState('');
   const [filterService, setFilterService] = useState('all');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'cancelled'>('all');
   const [filterDateRange, setFilterDateRange] = useState<{ start: string; end: string }>({ start: '', end: '' });
@@ -290,15 +289,13 @@ export default function CalendarDetailPage() {
     } else if (filterStatus === 'cancelled') {
       result = result.filter(b => b.status === 'cancelled');
     }
-    if (filterName.trim()) {
-      const q = filterName.trim().toLowerCase();
-      result = result.filter(b => b.customer_name.toLowerCase().includes(q));
-    }
-    if (filterContact.trim()) {
-      const q = filterContact.trim().toLowerCase();
+    if (filterKeyword.trim()) {
+      const q = filterKeyword.trim().toLowerCase();
       result = result.filter(b =>
-        b.customer_email.toLowerCase().includes(q) ||
-        (b.customer_phone && b.customer_phone.includes(q))
+        b.customer_name.toLowerCase().includes(q) ||
+        (b.customer_email && b.customer_email.toLowerCase().includes(q)) ||
+        (b.customer_phone && b.customer_phone.includes(q)) ||
+        (b.notes && b.notes.toLowerCase().includes(q))
       );
     }
     if (filterService && filterService !== 'all') {
@@ -313,17 +310,16 @@ export default function CalendarDetailPage() {
       result = result.filter(b => new Date(b.start_time) < end);
     }
     return result.sort((a, b) => new Date(b.start_time).getTime() - new Date(a.start_time).getTime());
-  }, [bookings, filterName, filterContact, filterService, filterStatus, filterDateRange]);
+  }, [bookings, filterKeyword, filterService, filterStatus, filterDateRange]);
 
   const clearFilters = () => {
-    setFilterName('');
-    setFilterContact('');
+    setFilterKeyword('');
     setFilterService('all');
     setFilterStatus('all');
     setFilterDateRange({ start: '', end: '' });
   };
 
-  const hasFilters = filterName || filterContact || filterService !== 'all' || filterStatus !== 'all' || filterDateRange.start || filterDateRange.end;
+  const hasFilters = filterKeyword || filterService !== 'all' || filterStatus !== 'all' || filterDateRange.start || filterDateRange.end;
 
   // ===================== 日历视图 =====================
 
@@ -377,7 +373,7 @@ export default function CalendarDetailPage() {
   };
 
   const saveBooking = async () => {
-    if (!user || !bkServiceId || !bkCustomerName || !bkCustomerEmail || !bkStartTime) {
+    if (!user || !bkServiceId || !bkCustomerName || !bkStartTime) {
       setBookingError('请填写必填项');
       return;
     }
@@ -796,7 +792,7 @@ export default function CalendarDetailPage() {
           },
           CreateBookingRequest: {
             type: 'object',
-            required: ['calendar_id', 'service_id', 'start_time', 'customer_name', 'customer_email'],
+            required: ['calendar_id', 'service_id', 'start_time', 'customer_name'],
             properties: {
               calendar_id: { type: 'string', default: calId, description: '日历ID' },
               service_id: { type: 'string', description: '从服务列表获取的服务ID' },
@@ -1000,7 +996,7 @@ Content-Type: application/json
   "service_id": "<从服务列表获取>",
   "start_time": "<从可用时间中选择>",
   "customer_name": "客户姓名",
-  "customer_email": "客户邮箱",
+  "customer_email": "选填",
   "customer_phone": "可选",
   "notes": "可选备注"
 }
@@ -1232,21 +1228,16 @@ Authorization: Bearer <API_KEY>
                               <div className="flex-1 min-w-0">
                                 <div className="font-medium truncate flex items-center gap-1">
                                   {b.customer_name}
-                                  {b.customer_email && <span title={maskContact(b.customer_email, 'email')}><Mail className="h-3 w-3 text-muted-foreground" /></span>}
-                                  {b.customer_phone && <span title={maskContact(b.customer_phone, 'phone')}><Phone className="h-3 w-3 text-muted-foreground" /></span>}
+                                  {b.customer_email && <span className="text-xs text-muted-foreground">{b.customer_email}</span>}
+                                  {b.customer_phone && <span className="text-xs text-muted-foreground">{b.customer_phone}</span>}
                                 </div>
                                 <div className="text-xs text-muted-foreground">
                                   {new Date(b.start_time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
                                   {' - '}
                                   {svc?.name}
                                 </div>
-                                {customKeys.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {customKeys.slice(0, 3).map(k => (
-                                      <span key={k} className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground">{k}: {customFields[k].slice(0, 10)}</span>
-                                    ))}
-                                    {customKeys.length > 3 && <span className="text-[10px] text-muted-foreground">+{customKeys.length - 3}</span>}
-                                  </div>
+                                {b.notes && (
+                                  <div className="text-xs text-muted-foreground mt-0.5 truncate">{b.notes}</div>
                                 )}
                               </div>
                               <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
@@ -1346,14 +1337,10 @@ Authorization: Bearer <API_KEY>
                 <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
                   <Search className="h-4 w-4" /> 筛选
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <div>
-                    <Label className="text-xs">客户姓名</Label>
-                    <Input placeholder="搜索姓名" value={filterName} onChange={e => setFilterName(e.target.value)} className="h-8 text-sm" />
-                  </div>
-                  <div>
-                    <Label className="text-xs">联系方式</Label>
-                    <Input placeholder="邮箱/电话" value={filterContact} onChange={e => setFilterContact(e.target.value)} className="h-8 text-sm" />
+                    <Label className="text-xs">关键词搜索</Label>
+                    <Input placeholder="姓名/联系方式/备注" value={filterKeyword} onChange={e => setFilterKeyword(e.target.value)} className="h-8 text-sm" />
                   </div>
                   <div>
                     <Label className="text-xs">服务类型</Label>
@@ -1404,8 +1391,7 @@ Authorization: Bearer <API_KEY>
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>客户</TableHead>
-                        <TableHead>联系方式</TableHead>
+                        <TableHead>客户信息</TableHead>
                         <TableHead>服务</TableHead>
                         <TableHead>预约时间</TableHead>
                         <TableHead>备注</TableHead>
@@ -1416,32 +1402,18 @@ Authorization: Bearer <API_KEY>
                     <TableBody>
                       {filteredBookings.map(bk => {
                         const svc = services.find(s => s.id === bk.service_id);
-                        const customFields = parseCustomerInfo(bk.notes);
-                        const customKeys = Object.keys(customFields);
-                        const hasCustomFields = customKeys.length > 0;
                         return (
                           <TableRow key={bk.id} className={bk.status === 'cancelled' ? 'opacity-50' : ''}>
                             <TableCell>
                               <div className={`font-medium ${bk.status === 'cancelled' ? 'line-through' : ''}`}>{bk.customer_name}</div>
                               {bk.status === 'cancelled' && <Badge variant="destructive" className="text-[10px] mt-0.5">已取消</Badge>}
-                            </TableCell>
-                            <TableCell>
-                              <div className="text-xs flex items-center gap-1">
-                                {bk.customer_email && <><Mail className="h-3 w-3 text-muted-foreground" />{bk.customer_email}</>}
-                              </div>
-                              {bk.customer_phone && <div className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="h-3 w-3" />{bk.customer_phone}</div>}
+                              {bk.customer_email && <div className="text-xs text-muted-foreground">{bk.customer_email}</div>}
+                              {bk.customer_phone && <div className="text-xs text-muted-foreground">{bk.customer_phone}</div>}
                             </TableCell>
                             <TableCell>{svc?.name || '-'}</TableCell>
                             <TableCell className="text-xs whitespace-nowrap">{formatTime(bk.start_time)}</TableCell>
-                            <TableCell className="max-w-[120px]">
-                              {hasCustomFields ? (
-                                <div className="space-y-0.5">
-                                  {customKeys.slice(0, 2).map(k => (
-                                    <div key={k} className="text-xs text-muted-foreground truncate">{k}: {customFields[k]}</div>
-                                  ))}
-                                  {customKeys.length > 2 && <div className="text-xs text-muted-foreground">+{customKeys.length - 2} 更多</div>}
-                                </div>
-                              ) : <span className="text-xs text-muted-foreground">-</span>}
+                            <TableCell className="max-w-[200px]">
+                              <div className="text-xs text-muted-foreground truncate">{bk.notes || '-'}</div>
                             </TableCell>
                             <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatTime(bk.created_at)}</TableCell>
                             <TableCell className="text-right">
@@ -1654,8 +1626,8 @@ Authorization: Bearer <API_KEY>
               <Input value={bkCustomerName} onChange={e => setBkCustomerName(e.target.value)} placeholder="客户姓名" />
             </div>
             <div>
-              <Label>客户邮箱 *</Label>
-              <Input type="email" value={bkCustomerEmail} onChange={e => setBkCustomerEmail(e.target.value)} placeholder="email@example.com" />
+              <Label>客户邮箱</Label>
+              <Input type="email" value={bkCustomerEmail} onChange={e => setBkCustomerEmail(e.target.value)} placeholder="选填" />
             </div>
             <div>
               <Label>客户电话</Label>
@@ -1666,8 +1638,8 @@ Authorization: Bearer <API_KEY>
               <Input type="datetime-local" value={bkStartTime} onChange={e => setBkStartTime(e.target.value)} />
             </div>
             <div>
-              <Label>备注</Label>
-              <Textarea value={bkNotes} onChange={e => setBkNotes(e.target.value)} placeholder="选填" rows={2} />
+              <Label>备注 / 额外信息</Label>
+              <Textarea value={bkNotes} onChange={e => setBkNotes(e.target.value)} placeholder="客户电话、地址、特殊需求等，支持自由输入" rows={3} />
             </div>
             {bookingError && <p className="text-sm text-destructive">{bookingError}</p>}
           </div>

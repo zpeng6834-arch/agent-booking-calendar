@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     } = body;
 
     // 参数验证
-    if (!calendar_id || !service_id || !start_time || !customer_name || !customer_email) {
+    if (!calendar_id || !service_id || !start_time || !customer_name) {
       return NextResponse.json(
         { 
           success: false, 
@@ -47,11 +47,11 @@ export async function POST(request: NextRequest) {
             service_id: '服务ID（从 GET /api/calendars/{id}/services 获取）',
             start_time: '预约开始时间，ISO 8601 格式（从 GET /api/availability 获取可选时间）',
             customer_name: '客户姓名',
-            customer_email: '客户邮箱',
           },
           optional: {
+            customer_email: '客户邮箱',
             customer_phone: '客户电话',
-            notes: '预约备注',
+            notes: '预约备注（支持任意文本，如额外客户信息、特殊要求等）',
           },
         },
         { status: 400 }
