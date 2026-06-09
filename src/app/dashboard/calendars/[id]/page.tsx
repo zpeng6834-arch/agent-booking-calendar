@@ -19,6 +19,7 @@ import {
   ChevronLeft, ChevronRight, Plus, Pencil, Trash2, Copy, Check,
   Calendar, Settings, Key, FileText, Users, Clock, Search, X,
   ArrowLeft, Loader2, Sparkles, AlertTriangle, RefreshCw,
+  Mail, Phone, ChevronDown, ChevronUp,
 } from 'lucide-react';
 
 // ===================== 类型 =====================
@@ -83,6 +84,32 @@ const SERVICE_COLORS = [
   'bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500',
   'bg-violet-500', 'bg-cyan-500', 'bg-orange-500', 'bg-teal-500',
 ];
+
+// 解析客户信息（从 notes 中提取自定义字段）
+function parseCustomerInfo(notes: string | null): Record<string, string> {
+  if (!notes) return {};
+  try {
+    const parsed = JSON.parse(notes);
+    if (typeof parsed === 'object' && parsed !== null) {
+      return parsed as Record<string, string>;
+    }
+  } catch {
+    // notes 不是 JSON，作为纯文本忽略
+  }
+  return {};
+}
+
+// 脱敏联系方式
+function maskContact(value: string, type: 'email' | 'phone'): string {
+  if (type === 'email') {
+    const [local, domain] = value.split('@');
+    if (!domain) return value.slice(0, 2) + '***';
+    return (local.length > 2 ? local.slice(0, 2) + '***' : local[0] + '***') + '@' + domain;
+  }
+  // phone
+  if (value.length <= 7) return value.slice(0, 3) + '****';
+  return value.slice(0, 3) + '****' + value.slice(-4);
+}
 
 // ===================== 工具函数 =====================
 
@@ -611,6 +638,23 @@ export default function CalendarDetailPage() {
             },
           },
         },
+        '/api/quick-book': {
+          post: {
+            summary: '智能预约（推荐）',
+            description: '一句话完成预约。传入服务名称+时间偏好+客户信息，自动匹配服务、解析时间、检查容量、完成预约。失败时返回替代时间建议。这是 Agent 预约的首选接口。',
+            operationId: 'quickBook',
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/QuickBookRequest' } } },
+            },
+            responses: {
+              '200': {
+                description: '预约成功或失败（含详细信息）',
+                content: { 'application/json': { schema: { '$ref': '#/components/schemas/QuickBookResponse' } } },
+              },
+            },
+          },
+        },
         '/api/bookings/{id}': {
           patch: {
             summary: '改期预约',
@@ -803,6 +847,46 @@ export default function CalendarDetailPage() {
               new_start_time: { type: 'string', format: 'date-time', description: '新的开始时间(UTC ISO 8601)' },
             },
           },
+          QuickBookRequest: {
+            type: 'object',
+            required: ['calendar_id', 'service_name', 'time_preference', 'customer_info'],
+            properties: {
+              calendar_id: { type: 'string', default: calId, description: '日历ID' },
+              service_name: { type: 'string', description: '服务名称（支持模糊匹配，如"按摩"）' },
+              time_preference: { type: 'string', description: '时间偏好，如"明天下午"、"下周一上午"、"2025-01-20 14:00"' },
+              customer_info: {
+                type: 'object',
+                description: '客户信息（所有字段可选，支持任意自定义字段）',
+                properties: {
+                  name: { type: 'string', description: '客户姓名（可选）' },
+                  email: { type: 'string', description: '客户邮箱（可选，用于去重）' },
+                  phone: { type: 'string', description: '客户电话（可选，用于去重）' },
+                },
+                additionalProperties: { type: 'string', description: '任意自定义字段，如年龄、地址等' },
+              },
+              duration_minutes: { type: 'integer', description: '预约时长（分钟），可选，默认使用服务默认时长' },
+            },
+          },
+          QuickBookResponse: {
+            type: 'object',
+            properties: {
+              success: { type: 'boolean' },
+              matched_service: {
+                type: 'object',
+                description: '匹配到的服务信息',
+                properties: {
+                  id: { type: 'string' },
+                  name: { type: 'string' },
+                  duration_minutes: { type: 'integer' },
+                },
+              },
+              parsed_time: { type: 'string', description: '解析后的具体时间(ISO 8601)' },
+              booking: { '$ref': '#/components/schemas/BookingData', description: '预约信息（成功时返回）' },
+              fail_reason: { type: 'string', enum: ['service_not_found', 'no_available_slot', 'service_full', 'calendar_full', 'time_parsing_failed'], description: '失败原因' },
+              suggested_slots: { type: 'array', items: { '$ref': '#/components/schemas/AvailableSlot' }, description: '推荐的可用时间' },
+              agent_hint: { type: 'string', description: '给 Agent 的下一步操作建议' },
+            },
+          },
         },
       },
     };
@@ -851,7 +935,36 @@ ${svcList || '| 暂无服务 | - | - | - | - |'}
 - 服务容量：每个服务有自己的每时段可预约人数上限（见上表）
 - 两层约束同时生效，任一层满则不可预约
 
-## API 调用流程
+## ⭐ 推荐：智能预约（quick-book）
+**一句话完成预约，无需多次 API 调用！**
+\`\`\`
+POST ${apiBaseUrl}/api/quick-book
+Authorization: Bearer <API_KEY>
+Content-Type: application/json
+
+{
+  "calendar_id": "${calId}",
+  "service_name": "按摩",           // 服务名称，支持模糊匹配
+  "time_preference": "明天下午",    // 自然语言时间
+  "customer_info": {               // 所有字段可选，支持任意自定义字段
+    "name": "张三",
+    "phone": "13800138000",
+    "年龄": "30",                  // 自定义字段
+    "来源": "微信"
+  }
+}
+\`\`\`
+
+**quick-book 的优势**：
+- 自动匹配服务（支持模糊匹配，如"按摩"匹配"全身按摩服务"）
+- 自动解析时间（支持"明天下午"、"下周一上午"、"2025-01-20 14:00"等格式）
+- 自动检查容量、完成预约
+- 失败时返回 fail_reason + suggested_slots
+- customer_info 所有字段可选，无 name 时用"匿名客户"，支持任意自定义字段
+
+---
+
+## 完整 API 列表（高级用法）
 
 ### 1. 获取日历元数据
 \`\`\`
@@ -859,7 +972,7 @@ GET ${apiBaseUrl}/api/calendars/${calId}
 Authorization: Bearer <API_KEY>
 \`\`\`
 
-### 2. 获取服务列表（必须先调用）
+### 2. 获取服务列表
 \`\`\`
 GET ${apiBaseUrl}/api/calendars/${calId}/services
 Authorization: Bearer <API_KEY>
@@ -876,7 +989,7 @@ GET ${apiBaseUrl}/api/availability?calendar_id=${calId}&date=YYYY-MM-DD&days=7
 Authorization: Bearer <API_KEY>
 \`\`\`
 
-### 4. 创建预约
+### 4. 创建预约（标准方式，需先查可用时间）
 \`\`\`
 POST ${apiBaseUrl}/api/bookings
 Authorization: Bearer <API_KEY>
@@ -912,12 +1025,12 @@ Authorization: Bearer <API_KEY>
 \`\`\`
 
 ## 重要注意事项
-1. **时区优先**：所有时间以日历时区 ${calendar.timezone} 为准，API 时间为 UTC 格式，请勿混淆
-2. **先查后约**：创建预约前必须先调用 availability 接口确认时间可用
-3. **失败处理**：预约失败时 API 会返回 fail_reason（service_full/calendar_full/duplicate/outside_business_hours）和 suggested_slots，请从建议时间中推荐给用户
-4. **防重复**：同一客户不能在同一时段重复预约同一服务
+1. **优先使用 quick-book**：一句话完成预约，减少 API 调用次数
+2. **时区优先**：所有时间以日历时区 ${calendar.timezone} 为准，API 时间为 UTC 格式，请勿混淆
+3. **客户信息灵活**：name/email/phone 均可选，支持任意自定义字段（存入 notes）
+4. **失败处理**：预约失败时 API 会返回 fail_reason 和 suggested_slots，请从建议时间中推荐给用户
 5. **认证**：所有请求需要 Authorization: Bearer <API_KEY>
-6. **推荐流程**：问需求 → 列服务 → 查可用时间 → 创建预约`;
+6. **推荐流程**：问需求 → 调用 quick-book → 处理结果（失败时从 suggested_slots 推荐）`;
 
     const schemaStr = JSON.stringify(schema, null, 2);
     setGeneratedSchema(schemaStr);
@@ -1111,21 +1224,28 @@ Authorization: Bearer <API_KEY>
                         {selectedDateBookings.map(b => {
                           const svc = services.find(s => s.id === b.service_id);
                           const svcIdx = services.indexOf(svc!);
+                          const customFields = parseCustomerInfo(b.notes);
+                          const customKeys = Object.keys(customFields);
                           return (
                             <div key={b.id} className="flex items-center gap-2 p-2 rounded-md bg-muted/50 text-sm group">
                               <div className={`w-2 h-2 rounded-full shrink-0 ${SERVICE_COLORS[svcIdx % SERVICE_COLORS.length]}`} />
                               <div className="flex-1 min-w-0">
-                                <div className="font-medium truncate">
+                                <div className="font-medium truncate flex items-center gap-1">
                                   {b.customer_name}
+                                  {b.customer_email && <span title={maskContact(b.customer_email, 'email')}><Mail className="h-3 w-3 text-muted-foreground" /></span>}
+                                  {b.customer_phone && <span title={maskContact(b.customer_phone, 'phone')}><Phone className="h-3 w-3 text-muted-foreground" /></span>}
                                 </div>
                                 <div className="text-xs text-muted-foreground">
                                   {new Date(b.start_time).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
                                   {' - '}
                                   {svc?.name}
                                 </div>
-                                {b.notes && (
-                                  <div className="text-xs text-muted-foreground/70 truncate mt-0.5 italic" title={b.notes}>
-                                    {b.notes}
+                                {customKeys.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {customKeys.slice(0, 3).map(k => (
+                                      <span key={k} className="text-[10px] px-1 py-0.5 rounded bg-muted text-muted-foreground">{k}: {customFields[k].slice(0, 10)}</span>
+                                    ))}
+                                    {customKeys.length > 3 && <span className="text-[10px] text-muted-foreground">+{customKeys.length - 3}</span>}
                                   </div>
                                 )}
                               </div>
@@ -1296,6 +1416,9 @@ Authorization: Bearer <API_KEY>
                     <TableBody>
                       {filteredBookings.map(bk => {
                         const svc = services.find(s => s.id === bk.service_id);
+                        const customFields = parseCustomerInfo(bk.notes);
+                        const customKeys = Object.keys(customFields);
+                        const hasCustomFields = customKeys.length > 0;
                         return (
                           <TableRow key={bk.id} className={bk.status === 'cancelled' ? 'opacity-50' : ''}>
                             <TableCell>
@@ -1303,12 +1426,23 @@ Authorization: Bearer <API_KEY>
                               {bk.status === 'cancelled' && <Badge variant="destructive" className="text-[10px] mt-0.5">已取消</Badge>}
                             </TableCell>
                             <TableCell>
-                              <div className="text-xs">{bk.customer_email}</div>
-                              {bk.customer_phone && <div className="text-xs text-muted-foreground">{bk.customer_phone}</div>}
+                              <div className="text-xs flex items-center gap-1">
+                                {bk.customer_email && <><Mail className="h-3 w-3 text-muted-foreground" />{bk.customer_email}</>}
+                              </div>
+                              {bk.customer_phone && <div className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="h-3 w-3" />{bk.customer_phone}</div>}
                             </TableCell>
                             <TableCell>{svc?.name || '-'}</TableCell>
                             <TableCell className="text-xs whitespace-nowrap">{formatTime(bk.start_time)}</TableCell>
-                            <TableCell className="max-w-[120px] truncate text-xs text-muted-foreground">{bk.notes || '-'}</TableCell>
+                            <TableCell className="max-w-[120px]">
+                              {hasCustomFields ? (
+                                <div className="space-y-0.5">
+                                  {customKeys.slice(0, 2).map(k => (
+                                    <div key={k} className="text-xs text-muted-foreground truncate">{k}: {customFields[k]}</div>
+                                  ))}
+                                  {customKeys.length > 2 && <div className="text-xs text-muted-foreground">+{customKeys.length - 2} 更多</div>}
+                                </div>
+                              ) : <span className="text-xs text-muted-foreground">-</span>}
+                            </TableCell>
                             <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatTime(bk.created_at)}</TableCell>
                             <TableCell className="text-right">
                               {bk.status !== 'cancelled' && (
