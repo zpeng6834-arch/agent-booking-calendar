@@ -33,7 +33,6 @@ import {
   Menu,
   LogOut,
   User,
-  Home,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -44,7 +43,6 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { href: '/dashboard', label: '概览', icon: Home },
   { href: '/dashboard/calendars', label: '我的日历', icon: Calendar },
 ];
 
