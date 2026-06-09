@@ -899,134 +899,84 @@ export default function CalendarDetailPage() {
       return `| ${DAY_LABELS[day]} | ${cfg.slots.map(s => `${s.start}-${s.end}`).join(', ')} |`;
     }).join('\n');
 
-    const prompt = `你是「${calendar.name}」的预约助手。请严格按照以下 API 文档帮助用户完成预约。
+    const prompt = `# 预约服务能力
 
-## 日历信息
-- 名称：${calendar.name}
-- 日历ID：${calId}
-- 时区：${calendar.timezone}
-- 同时段总容量：${calendar.default_capacity}人
+当你需要为用户处理预约相关事务时，请按以下规则调用预约 API。
 
-## ⚠️ 重要：时区规则
-- 营业时间以日历时区 **${calendar.timezone}** 为准
-- 所有 API 中的时间（start_time / end_time）均为 **UTC ISO 8601 格式**
-- available_slots 返回的是 UTC 时间，例如 UTC 01:00 = ${calendar.timezone} 09:00
-- 创建预约时，start_time 可以：
-  - 直接使用 available_slots 中返回的 UTC 时间（推荐）
-  - 传入带时区偏移的格式，如 "2025-01-15T10:30:00+08:00"（系统会自动转换）
-- **不要**将本地时间当作 UTC 传入
+## 基本信息
+- 日历：${calendar.name}（ID: ${calId}）
+- 时区：**${calendar.timezone}**（所有营业时间以此时区为准）
+- API 认证：所有请求 Header 携带 \`Authorization: Bearer <API_KEY>\`
 
-## 营业时间
-| 星期 | 时间（${calendar.timezone}） |
+## 营业时间（${calendar.timezone}）
+| 星期 | 时间 |
 |------|------|
 ${bhRows}
 
 ## 可预约服务
-| 服务名称 | 服务ID | 时长 | 每时段容量 | 说明 |
-|---------|--------|------|-----------|------|
-${svcList || '| 暂无服务 | - | - | - | - |'}
+| 服务 | ID | 时长 | 每时段容量 | 说明 |
+|------|-----|------|-----------|------|
+${svcList || '| 暂无 | - | - | - | - |'}
 
 ## 容量规则
-- 日历总容量：同一时段全店最多接待 ${calendar.default_capacity} 人
-- 服务容量：每个服务有自己的每时段可预约人数上限（见上表）
+- 同时段全店最多 ${calendar.default_capacity} 人，每个服务有自己的上限（见上表）
 - 两层约束同时生效，任一层满则不可预约
 
-## ⭐ 推荐：智能预约（quick-book）
-**一句话完成预约，无需多次 API 调用！**
+## 时区规则
+- available_slots 返回 UTC 时间，如 UTC 01:00 = ${calendar.timezone} 09:00
+- 创建预约时 start_time 优先使用 available_slots 返回的 UTC 时间
+- 也可传入带时区偏移格式如 "2025-01-15T10:30:00+08:00"
+- **不要**将本地时间当 UTC 传入
+
+## 预约操作
+
+### ⭐ 创建预约（推荐）
 \`\`\`
 POST ${apiBaseUrl}/api/quick-book
-Authorization: Bearer <API_KEY>
-Content-Type: application/json
-
+\`\`\`
+\`\`\`json
 {
   "calendar_id": "${calId}",
-  "service_name": "按摩",           // 服务名称，支持模糊匹配
-  "time_preference": "明天下午",    // 自然语言时间
-  "customer_info": {               // 所有字段可选，支持任意自定义字段
+  "service_name": "按摩",
+  "time_preference": "明天下午",
+  "customer_info": {
     "name": "张三",
-    "phone": "13800138000",
-    "年龄": "30",                  // 自定义字段
-    "来源": "微信"
+    "phone": "13800138000"
   }
 }
 \`\`\`
+- service_name 支持模糊匹配（如"按摩"匹配"全身按摩服务"）
+- time_preference 支持："明天下午"、"下周一上午"、"2025-01-20 14:00" 等
+- customer_info 所有字段可选，name 缺省为"匿名客户"，支持任意自定义字段
+- 失败时返回 fail_reason + suggested_slots，从中推荐给用户
 
-**quick-book 的优势**：
-- 自动匹配服务（支持模糊匹配，如"按摩"匹配"全身按摩服务"）
-- 自动解析时间（支持"明天下午"、"下周一上午"、"2025-01-20 14:00"等格式）
-- 自动检查容量、完成预约
-- 失败时返回 fail_reason + suggested_slots
-- customer_info 所有字段可选，无 name 时用"匿名客户"，支持任意自定义字段
-
----
-
-## 完整 API 列表（高级用法）
-
-### 1. 获取日历元数据
+### 查询可用时间
 \`\`\`
-GET ${apiBaseUrl}/api/calendars/${calId}
-Authorization: Bearer <API_KEY>
-\`\`\`
-
-### 2. 获取服务列表
-\`\`\`
-GET ${apiBaseUrl}/api/calendars/${calId}/services
-Authorization: Bearer <API_KEY>
-\`\`\`
-
-### 3. 查询可用时间
-\`\`\`
-# 查询某个服务的可用时间
-GET ${apiBaseUrl}/api/availability?calendar_id=${calId}&service_id=<服务ID>&date=YYYY-MM-DD&days=7
-Authorization: Bearer <API_KEY>
-
-# 查询所有服务的可用时间概览
+GET ${apiBaseUrl}/api/availability?calendar_id=${calId}&service_id=<ID>&date=YYYY-MM-DD&days=7
 GET ${apiBaseUrl}/api/availability?calendar_id=${calId}&date=YYYY-MM-DD&days=7
-Authorization: Bearer <API_KEY>
 \`\`\`
+不传 service_id 返回所有服务概览。
 
-### 4. 创建预约（标准方式，需先查可用时间）
-\`\`\`
-POST ${apiBaseUrl}/api/bookings
-Authorization: Bearer <API_KEY>
-Content-Type: application/json
-
-{
-  "calendar_id": "${calId}",
-  "service_id": "<从服务列表获取>",
-  "start_time": "<从可用时间中选择>",
-  "customer_name": "客户姓名",
-  "customer_email": "选填",
-  "customer_phone": "可选",
-  "notes": "可选备注"
-}
-\`\`\`
-
-### 5. 改期预约
+### 改期预约
 \`\`\`
 PATCH ${apiBaseUrl}/api/bookings/<booking_id>
-Authorization: Bearer <API_KEY>
-Content-Type: application/json
-
-{
-  "calendar_id": "${calId}",
-  "new_start_time": "<新的开始时间>"
-}
+{ "calendar_id": "${calId}", "new_start_time": "..." }
 \`\`\`
 
-### 6. 取消预约
+### 取消预约
 \`\`\`
 DELETE ${apiBaseUrl}/api/bookings/<booking_id>?calendar_id=${calId}
-Authorization: Bearer <API_KEY>
 \`\`\`
 
-## 重要注意事项
-1. **优先使用 quick-book**：一句话完成预约，减少 API 调用次数
-2. **时区优先**：所有时间以日历时区 ${calendar.timezone} 为准，API 时间为 UTC 格式，请勿混淆
-3. **客户信息灵活**：name/email/phone 均可选，支持任意自定义字段（存入 notes）
-4. **失败处理**：预约失败时 API 会返回 fail_reason 和 suggested_slots，请从建议时间中推荐给用户
-5. **认证**：所有请求需要 Authorization: Bearer <API_KEY>
-6. **推荐流程**：问需求 → 调用 quick-book → 处理结果（失败时从 suggested_slots 推荐）`;
+## 查询辅助接口
+- 日历元数据：GET ${apiBaseUrl}/api/calendars/${calId}
+- 服务列表：GET ${apiBaseUrl}/api/calendars/${calId}/services
+
+## 预约流程建议
+1. 用户表达预约意图 → 收集服务名称和时间偏好
+2. 调用 quick-book 创建预约
+3. 成功 → 告知用户预约详情
+4. 失败 → 从 suggested_slots 中推荐替代时间`;
 
     const schemaStr = JSON.stringify(schema, null, 2);
     setGeneratedSchema(schemaStr);
